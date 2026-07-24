@@ -1,45 +1,57 @@
 import json
+from pathlib import Path
 from typing import Any
 
 from settings import CATEGORIES_FILE
 
-
-def load_category_rules() -> dict[str, Any]:
-    """Load category configuration from JSON."""
-    if not CATEGORIES_FILE.exists():
-        raise FileNotFoundError(
-            f"Unable to find the configuration file {CATEGORIES_FILE.name}"
-        )
-
-    with CATEGORIES_FILE.open("r", encoding="utf-8") as file:
-        return json.load(file)
+# Global constants for default categories
+DEFAULT_INCOME_LABEL = "Varie"
+DEFAULT_EXPENSE_LABEL = "Altro"
 
 
-def categorize_transaction(
-    description: str,
-    amount: float,
-    category_data: dict[str, Any],
-) -> str:
-    """Assign the most specific available category to a transaction."""
-    description_upper = str(description).upper()
-    rules = category_data.get("rules", {})
-    default_income = category_data.get("default_income", "General Income")
-    default_expense = category_data.get("default_expense", "Other")
+def load_category_rules(filepath: Path = CATEGORIES_FILE) -> dict[str, Any]:
+    """Loads category mapping rules from a JSON file."""
+    default_config = {
+        "rules": {},
+        "default_income": DEFAULT_INCOME_LABEL,
+        "default_expense": DEFAULT_EXPENSE_LABEL,
+    }
+    
+    if not filepath.exists():
+        return default_config
 
-    best_category: str | None = None
-    max_pattern_length = 0
+    try:
+        with open(filepath, "r", encoding="utf-8") as file:
+            data = json.load(file)
+            return data if isinstance(data, dict) else default_config
+    except (json.JSONDecodeError, IOError):
+        return default_config
 
-    for category, patterns in rules.items():
-        for pattern in patterns:
-            if not pattern:
-                continue
 
-            if pattern.upper() in description_upper:
-                if len(pattern) > max_pattern_length:
-                    max_pattern_length = len(pattern)
-                    best_category = category
+class TransactionCategorizer:
+    """Categorizes transactions based on configurable keyword rules and amount signs."""
 
-    if best_category:
-        return best_category
+    def __init__(self, category_data: dict[str, Any]) -> None:
+        raw_rules = category_data.get("rules", {})
+        # Pre-convert keywords to uppercase for better performance and robustness
+        self.rules: dict[str, list[str]] = {
+            category: [kw.upper() for kw in keywords]
+            for category, keywords in raw_rules.items()
+        }
+        self.default_income: str = category_data.get("default_income", DEFAULT_INCOME_LABEL)
+        self.default_expense: str = category_data.get("default_expense", DEFAULT_EXPENSE_LABEL)
 
-    return default_income if amount > 0 else default_expense
+    def categorize(self, description: str, amount: float) -> str:
+        """Categorize a single transaction by description and amount."""
+        desc_upper = description.upper()
+
+        # 1. Match specific rules
+        for category, keywords in self.rules.items():
+            for keyword in keywords:
+                if keyword in desc_upper:
+                    return category
+
+        # 2. Fallback based on transaction direction
+        if amount > 0:
+            return self.default_income
+        return self.default_expense

@@ -1,117 +1,173 @@
-import logging
-from typing import Any
+from typing import Any, Protocol
 
-import gspread
-from google.oauth2.service_account import Credentials
+from categorization import TransactionCategorizer
+from settings import CREDENTIALS_FILE, SPREADSHEET_NAME, WORKSHEET_TRANSACTIONS
 
-from settings import CREDENTIALS_FILE, SCOPES, SPREADSHEET_NAME, WORKSHEET_CATEGORIES, WORKSHEET_TRANSACTIONS
+# Global constants for sheet headers
+HEADER_ID = "id"
+HEADER_DATE = "date"
+HEADER_ACCOUNT = "account"
+HEADER_CATEGORY = "category"
+HEADER_AMOUNT = "amount"
+HEADER_DESCRIPTION = "description"
+HEADER_YEAR_MONTH = "year-month"
+HEADER_MANUAL = "manual"
 
-logger = logging.getLogger(__name__)
+STANDARD_HEADERS = [
+    HEADER_ID,
+    HEADER_DATE,
+    HEADER_ACCOUNT,
+    HEADER_CATEGORY,
+    HEADER_AMOUNT,
+    HEADER_DESCRIPTION,
+    HEADER_YEAR_MONTH,
+    HEADER_MANUAL,
+]
 
-
-def connect_to_sheets() -> Any:
-    """Open the connection to Google Sheets via a service account."""
-    if not CREDENTIALS_FILE.exists():
-        raise FileNotFoundError(
-            f"Unable to find the credentials file {CREDENTIALS_FILE.name}"
-        )
-
-    creds = Credentials.from_service_account_file(
-        CREDENTIALS_FILE,
-        scopes=SCOPES,
-    )
-    client = gspread.authorize(creds)
-    return client.open(SPREADSHEET_NAME)
-
-
-def sync_categories_to_sheet(spreadsheet: Any, category_data: dict[str, Any]) -> None:
-    """Update the configured categories sheet while preserving the option schema."""
-    try:
-        sheet_cat = spreadsheet.worksheet(WORKSHEET_CATEGORIES)
-        category_rows = [["Category"], ["-"]]
-
-        for category in category_data.get("rules", {}).keys():
-            category_rows.append([category])
-
-        category_rows.append([category_data.get("default_income", "Entrate Varie")])
-        category_rows.append([category_data.get("default_expense", "Altro")])
-
-        sheet_cat.clear()
-        sheet_cat.update("A1", category_rows)
-        logger.info(f"'{WORKSHEET_CATEGORIES}' sheet synced successfully.")
-    except Exception as exc:
-        logger.warning(f"Error while syncing the '{WORKSHEET_CATEGORIES}' sheet: %s", exc)
+MANDATORY_HEADERS = [HEADER_CATEGORY, HEADER_AMOUNT, HEADER_DESCRIPTION, HEADER_MANUAL]
 
 
-def get_sheet_column_index(headers: list[str], target: str) -> int:
-    """Return the requested column index with a safe fallback."""
-    normalized_headers = [str(header).strip().lower() for header in headers]
-    try:
-        return normalized_headers.index(target.lower())
-    except ValueError:
-        return {
-            "categoria": 3,
-            "importo": 4,
-            "descrizione": 5,
-        }.get(target.lower(), 0)
+class WorksheetProtocol(Protocol):
+    """Protocol to abstract gspread operations useful for testing."""
+
+    def get_all_values(self) -> list[list[Any]]: ...
+    def update(self, range_name: str, values: list[list[Any]]) -> Any: ...
+    def clear(self) -> Any: ...
+    def append_row(self, values: list[Any]) -> Any: ...
 
 
-def recategorize_existing(sheet: Any, category_data: dict[str, Any], categorize_fn) -> None:
-    """Read transactions from the sheet and update only the modified categories."""
-    logger.info("Reading existing transactions from Google Sheets...")
-    all_data = sheet.get_all_values()
+def _col_to_letter(col_idx: int) -> str:
+    """Convert a 0-based index to an Excel column letter (0 -> 'A', 3 -> 'D')."""
+    return chr(65 + col_idx)
 
-    if len(all_data) <= 1:
-        logger.info("No transactions available to update.")
-        return
 
-    headers = all_data[0]
-    rows = all_data[1:]
-    cat_col_idx = get_sheet_column_index(headers, "Categoria")
-    amount_col_idx = get_sheet_column_index(headers, "Importo")
-    desc_col_idx = get_sheet_column_index(headers, "Descrizione")
+class GoogleSheetsClient:
+    """OOP client to manage interaction with the Google Transactions sheet."""
 
-    updated_categories: list[list[str]] = []
-    modified_count = 0
+    def __init__(self) -> None:
+        spreadsheet = self.connect_to_sheets()
+        sheet = self.get_transaction_sheet(spreadsheet)
+        self.sheet = sheet
 
-    for row in rows:
-        old_category = row[cat_col_idx].strip() if len(row) > cat_col_idx else ""
-        description = row[desc_col_idx] if len(row) > desc_col_idx else ""
+    def clear(self) -> None:
+        """Clear the worksheet keeping only the header row."""
+        all_values = self.sheet.get_all_values()
+        if not all_values:
+            return
+
+        headers = all_values[0]
+        self.sheet.clear()
+        self.sheet.append_row(headers)
+
+    def get_hashes(self) -> list[str]:
+        return self.sheet.col_values(1)[1:]
+
+    def append_rows(self, rows: list[list[Any]]) -> None:
+        self.sheet.append_rows(rows)
+
+    def recategorize_existing(
+        self,
+        categorizer: TransactionCategorizer,
+    ) -> int:
+        """Recategorize non-manual rows preserving user edits and return the number of truly updated rows."""
+        all_values = self.sheet.get_all_values()
+        if not all_values or len(all_values) <= 1:
+            return 0
+
+        headers = [str(h).strip().lower() for h in all_values[0]]
 
         try:
-            amount = float(row[amount_col_idx].replace(",", ".").replace("€", ""))
-        except (IndexError, ValueError):
-            amount = 0.0
+            col_category = headers.index(HEADER_CATEGORY)
+            col_amount = headers.index(HEADER_AMOUNT)
+            col_description = headers.index(HEADER_DESCRIPTION)
+            col_manual = headers.index(HEADER_MANUAL)
+        except ValueError as err:
+            raise ValueError(
+                f"Required header missing in Google Sheet: {err}"
+            ) from err
 
-        new_category = categorize_fn(description, amount, category_data)
-        updated_categories.append([new_category])
+        data_rows = all_values[1:]
+        updated_categories: list[list[str]] = []
+        updated_count = 0
 
-        if old_category != new_category:
-            modified_count += 1
+        for row in data_rows:
+            current_category = (
+                row[col_category] if col_category < len(row) else ""
+            )
+            
+            # Robust handling of Google Sheets checkboxes (supports both booleans and strings)
+            raw_manual = row[col_manual] if col_manual < len(row) else False
+            if isinstance(raw_manual, str):
+                is_manual = raw_manual.strip().upper() == "TRUE"
+            else:
+                is_manual = bool(raw_manual)
 
-    sheet.update(f"D2:D{len(updated_categories) + 1}", updated_categories)
+            if is_manual:
+                updated_categories.append([current_category])
+                continue
 
-    if modified_count > 0:
-        logger.info(
-            "Update complete! %s categories were actually changed across %s total transactions.",
-            modified_count,
-            len(rows),
-        )
-    else:
-        logger.info(
-            "Analyzed %s transactions: no category changes were required.",
-            len(rows),
-        )
+            description = (
+                row[col_description] if col_description < len(row) else ""
+            )
+            raw_amount = row[col_amount] if col_amount < len(row) else "0"
+
+            amount = self._parse_amount_safely(raw_amount)
+
+            new_category = categorizer.categorize(description, amount)
+            
+            # Check if the category actually changed
+            if new_category != current_category:
+                updated_count += 1
+
+            updated_categories.append([new_category])
+
+        if not updated_categories:
+            return 0
+
+        start_row = 2
+        end_row = start_row + len(updated_categories) - 1
+
+        col_letter = _col_to_letter(col_category)
+        range_label = f"{col_letter}{start_row}:{col_letter}{end_row}"
+
+        self.sheet.update(range_label, updated_categories)
+        
+        return updated_count
+    
+    @staticmethod
+    def _parse_amount_safely(raw_amount: Any) -> float:
+        """Helper to parse amount values robustly from sheet cells."""
+        if raw_amount is None:
+            return 0.0
+        text = str(raw_amount).strip()
+        if not text:
+            return 0.0
+        
+        cleaned = text.replace("€", "").replace("$", "").replace(" ", "")
+        if "," in cleaned and "." in cleaned:
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", ".")
+
+        try:
+            return float(cleaned)
+        except ValueError:
+            return 0.0
+
+    def connect_to_sheets(self) -> Any:
+        """Open and return the Google Spreadsheet searching by NAME using CREDENTIALS_FILE."""
+        import gspread
+
+        gc = gspread.service_account(filename=CREDENTIALS_FILE)
+        return gc.open(SPREADSHEET_NAME)
 
 
-def clear_transactions_sheet(sheet: Any) -> None:
-    """Clear the sheet content while keeping only the header row."""
-    logger.info("Clearing in progress...")
-    headers = [["ID", "Date", "Account", "Category", "Amount", "Description", "Year-Month"]]
-    sheet.clear()
-    sheet.update("A1", headers)
-    logger.info(f"'{WORKSHEET_TRANSACTIONS}' sheet reset successfully!")
+    def get_transaction_sheet(self, spreadsheet: Any) -> Any:
+        """Return the specific transaction worksheet."""
+        return spreadsheet.worksheet(WORKSHEET_TRANSACTIONS)
 
 
-def get_transaction_sheet(spreadsheet: Any) -> Any:
-    return spreadsheet.worksheet(WORKSHEET_TRANSACTIONS)
+
+
+
+

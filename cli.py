@@ -1,8 +1,12 @@
 import logging
 
-from categorization import categorize_transaction, load_category_rules
-from google_sheets import clear_transactions_sheet, connect_to_sheets, get_transaction_sheet, recategorize_existing, sync_categories_to_sheet
-from parsers import build_transaction_hash, normalize_amount, parse_bank_file
+from categorization import TransactionCategorizer, load_category_rules
+from google_sheets import GoogleSheetsClient
+from parsers import parse_bank_file
+from parsers.utils import (
+    build_transaction_hash, normalize_amount, 
+    COL_DATE, COL_DESCRIPTION, COL_AMOUNT
+)
 from settings import INPUT_DIR, WORKSHEET_TRANSACTIONS
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -10,55 +14,57 @@ logger = logging.getLogger(__name__)
 
 
 def process_files(force_reset: bool = False) -> None:
-    """Load all input transactions and append them to the Google Sheets worksheet."""
+    """Import files and upload new transactions to Google Sheets."""
     category_data = load_category_rules()
+    categorizer = TransactionCategorizer(category_data)
 
     logger.info("Connecting to Google Sheets...")
-    spreadsheet = connect_to_sheets()
-    sheet = get_transaction_sheet(spreadsheet)
-
-    sync_categories_to_sheet(spreadsheet, category_data)
+    client = GoogleSheetsClient()
 
     if force_reset:
-        clear_transactions_sheet(sheet)
+        logger.info("Clearing the worksheet...")
+        client.clear()
         existing_hashes: set[str] = set()
     else:
-        existing_hashes = set(sheet.col_values(1)[1:])
+        existing_hashes = set(client.get_hashes())
 
-    logger.info("Transactions already present in the sheet: %s", len(existing_hashes))
+    logger.info("Existing transactions in sheet: %s", len(existing_hashes))
 
     files = sorted(
-        item for item in INPUT_DIR.iterdir()
+        item
+        for item in INPUT_DIR.iterdir()
         if item.is_file()
         and item.suffix.lower() in {".xls", ".xlsx", ".csv"}
         and not item.name.startswith("~$")
     )
 
     if not files:
-        logger.warning("No files found in the /input folder")
+        logger.warning("No files found in the 'input/' folder.")
         return
 
     new_rows: list[list[object]] = []
 
     for filepath in files:
-        logger.info("Reading file: %s", filepath)
+        logger.info("Processing file: %s", filepath.name)
 
         try:
             df, bank_label = parse_bank_file(filepath)
 
             for _, row in df.iterrows():
-                if row["date"] is None or row["amount"] is None:
+                if row[COL_DATE] is None or row[COL_AMOUNT] is None:
                     continue
 
-                date_obj = row["date"]
-                amount_val = normalize_amount(row["amount"])
-                desc_val = str(row["description"]).strip()
-                hash_val = build_transaction_hash(bank_label, str(date_obj), amount_val, desc_val)
+                date_obj = row[COL_DATE]
+                amount_val = normalize_amount(row[COL_AMOUNT])
+                desc_val = str(row[COL_DESCRIPTION]).strip()
+                hash_val = build_transaction_hash(
+                    bank_label, str(date_obj), amount_val, desc_val
+                )
 
                 if hash_val in existing_hashes:
                     continue
 
-                category_name = categorize_transaction(desc_val, amount_val, category_data)
+                category_name = categorizer.categorize(desc_val, amount_val)
                 new_rows.append(
                     [
                         hash_val,
@@ -68,43 +74,61 @@ def process_files(force_reset: bool = False) -> None:
                         amount_val,
                         desc_val,
                         str(date_obj)[:7],
+                        False,  # Default for 'Manual' column
                     ]
                 )
                 existing_hashes.add(hash_val)
 
         except Exception as exc:
-            logger.error("Error while processing %s: %s", filepath, exc)
+            logger.error("Error processing %s: %s", filepath.name, exc)
 
     if new_rows:
-        logger.info("Sending %s new transactions to Google Sheets...", len(new_rows))
-        sheet.append_rows(new_rows)
+        logger.info(
+            "Appending %s new transactions to Google Sheets...", len(new_rows)
+        )
+        client.append_rows(new_rows)
         logger.info("Upload completed successfully!")
     else:
         logger.info("No new transactions to add.")
 
 
 def main() -> None:
-    """Main interactive menu for the ingestion workflow."""
-    print("\n--- 🏦 PERSONAL FINANCE MANAGER ---")
-    print("1. Sync new transactions (Normal)")
-    print("2. Update ONLY Categories (Fast - apply the new JSON rules to the current sheet)")
+    """CLI interface."""
+    print("\n--- 🏦 FinApp ---")
+    print("1. Sync new transactions (defaulr)")
+    print("2. Update Categories (Fast - re-apply JSON rules preserving manual edits)")
     print(
-        f"3. Full reset and reload from scratch (Clear '{WORKSHEET_TRANSACTIONS}' and re-read the files)"
+        "3. Full reset and reload (Clear"
+        f" '{WORKSHEET_TRANSACTIONS}' and reload input files)"
     )
 
     choice = input("\nChoose an option (1/2/3) [Default: 1]: ").strip()
 
     if choice == "2":
         category_data = load_category_rules()
-        spreadsheet = connect_to_sheets()
-        sheet = get_transaction_sheet(spreadsheet)
-        sync_categories_to_sheet(spreadsheet, category_data)
-        recategorize_existing(sheet, category_data, categorize_transaction)
+        categorizer = TransactionCategorizer(category_data)
+
+        logger.info("Connecting to Google Sheets...")
+        client = GoogleSheetsClient()
+        
+        logger.info("Recategorizing existing transactions...")
+        updated_count = client.recategorize_existing(categorizer)
+        
+        logger.info("Successfully updated categories for %s transaction(s).", updated_count)
     elif choice == "3":
-        confirm = input("⚠️ Are you sure you want to CLEAR the sheet and reload from scratch? (y/n): ").strip().lower()
+        confirm = (
+            input(
+                "⚠️ Are you sure you want to CLEAR the sheet and reload? (y/n): "
+            )
+            .strip()
+            .lower()
+        )
         if confirm == "y":
             process_files(force_reset=True)
         else:
             logger.info("Operation cancelled.")
     else:
         process_files(force_reset=False)
+
+if __name__ == "__main__":
+    main()
