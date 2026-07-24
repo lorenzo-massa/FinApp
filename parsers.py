@@ -118,8 +118,9 @@ def parse_isybank(filepath: Path) -> pd.DataFrame:
             details_series,
         )
 
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df["date"] = pd.to_datetime(df["date"], errors="coerce", format="mixed")
     df["date"] = df["date"].dt.strftime("%Y-%m-%d")
+
     return df[["date", "description", "amount"]]
 
 
