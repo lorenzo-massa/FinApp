@@ -9,7 +9,8 @@ __pycache__/
 
 # Local files
 input/
-*.json
+credentials.json
+categories.json
 *.csv
 *.xlsx
 
