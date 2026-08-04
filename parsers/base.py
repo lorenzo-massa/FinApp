@@ -14,4 +14,3 @@ class BaseParser(ABC):
     @abstractmethod
     def parse(self) -> pd.DataFrame:
         """Parse the bank file and return a DataFrame with standardized columns."""
-        pass

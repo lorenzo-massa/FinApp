@@ -125,7 +125,7 @@ class GoogleSheetsClient:
         processed_rows = 0
         skipped_manual_rows = 0
 
-        for row_index, row in enumerate(data_rows, start=2):
+        for row in data_rows:
             current_category = (
                 row[col_category] if col_category < len(row) else ""
             )
