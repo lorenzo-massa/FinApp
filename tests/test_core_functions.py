@@ -528,3 +528,35 @@ class TestGoogleSheetsClient:
 
         mock_sheet.clear.assert_not_called()
         mock_sheet.append_row.assert_not_called()
+
+    def test_get_manual_overrides_returns_hash_to_category_map(self):
+        """Manual rows should be snapshotted by hash so the reset can restore them later."""
+        row_auto = [
+            "hash1",
+            "2026-01-10",
+            "Isybank",
+            "Other",
+            "-50.00",
+            "SUPERMARKET SPEND",
+            "2026-01",
+            False,
+        ]
+        row_manual = [
+            "hash2",
+            "2026-01-11",
+            "Isybank",
+            "Custom Expense",
+            "-50.00",
+            "SUPERMARKET SPEND",
+            "2026-01",
+            True,
+        ]
+
+        mock_sheet = MagicMock()
+        mock_sheet.get_all_values.return_value = [STANDARD_HEADERS, row_auto, row_manual]
+
+        with patch.object(GoogleSheetsClient, "__init__", lambda self: setattr(self, 'sheet', mock_sheet)):
+            client = GoogleSheetsClient()
+
+        assert client.get_manual_overrides() == {"hash2": "Custom Expense"}
+

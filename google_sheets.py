@@ -62,6 +62,42 @@ class GoogleSheetsClient:
     def get_hashes(self) -> list[str]:
         return self.sheet.col_values(1)[1:]
 
+    @staticmethod
+    def _is_manual_entry(raw_manual: str) -> bool:
+        """Normalize Google Sheets checkbox values to a boolean."""
+        if isinstance(raw_manual, str):
+            return raw_manual.strip().upper() == "TRUE"
+        else:
+            return bool(raw_manual)
+
+    def get_manual_overrides(self) -> dict[str, str]:
+        """Return a mapping of transaction hash to saved manual category."""
+        all_values = self.sheet.get_all_values()
+        if not all_values or len(all_values) <= 1:
+            return {}
+
+        headers = [str(h).strip().lower() for h in all_values[0]]
+
+        try:
+            col_id = headers.index(HEADER_ID)
+            col_category = headers.index(HEADER_CATEGORY)
+            col_manual = headers.index(HEADER_MANUAL)
+        except ValueError:
+            return {}
+
+        manual_overrides: dict[str, str] = {}
+        for row in all_values[1:]:
+
+            if not self._is_manual_entry(row[col_manual]):
+                continue
+
+            transaction_id = str(row[col_id]).strip()
+            category = str(row[col_category]).strip()
+            if transaction_id and category:
+                manual_overrides[transaction_id] = category
+
+        return manual_overrides
+
     def append_rows(self, rows: list[list[Any]]) -> None:
         self.sheet.append_rows(rows)
 
@@ -97,12 +133,7 @@ class GoogleSheetsClient:
             
             # Robust handling of Google Sheets checkboxes (supports both booleans and strings)
             raw_manual = row[col_manual] if col_manual < len(row) else False
-            if isinstance(raw_manual, str):
-                is_manual = raw_manual.strip().upper() == "TRUE"
-            else:
-                is_manual = bool(raw_manual)
-
-            if is_manual:
+            if self._is_manual_entry(raw_manual):
                 updated_categories.append([current_category])
                 continue
 
