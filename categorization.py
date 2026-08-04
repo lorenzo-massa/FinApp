@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
 from settings import CATEGORIES_FILE
 
@@ -9,9 +9,15 @@ DEFAULT_INCOME_LABEL = "Varie"
 DEFAULT_EXPENSE_LABEL = "Altro"
 
 
-def load_category_rules(filepath: Path = CATEGORIES_FILE) -> dict[str, Any]:
+class CategoryConfig(TypedDict):
+    rules: dict[str, list[str]]
+    default_income: str
+    default_expense: str
+
+
+def load_category_rules(filepath: Path = CATEGORIES_FILE) -> CategoryConfig:
     """Loads category mapping rules from a JSON file."""
-    default_config = {
+    default_config: CategoryConfig = {
         "rules": {},
         "default_income": DEFAULT_INCOME_LABEL,
         "default_expense": DEFAULT_EXPENSE_LABEL,
@@ -31,7 +37,7 @@ def load_category_rules(filepath: Path = CATEGORIES_FILE) -> dict[str, Any]:
 class TransactionCategorizer:
     """Categorizes transactions based on configurable keyword rules and amount signs."""
 
-    def __init__(self, category_data: dict[str, Any]) -> None:
+    def __init__(self, category_data: CategoryConfig) -> None:
         raw_rules = category_data.get("rules", {})
         # Pre-convert keywords to uppercase for better performance and robustness
         self.rules: dict[str, list[str]] = {

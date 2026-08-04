@@ -1,6 +1,6 @@
-import pandas as pd
 import hashlib
-from typing import Any
+
+import pandas as pd
 
 # Global constants for standardized output columns
 COL_DATE = "date"
@@ -8,7 +8,7 @@ COL_DESCRIPTION = "description"
 COL_AMOUNT = "amount"
 STANDARD_COLUMNS = [COL_DATE, COL_DESCRIPTION, COL_AMOUNT]
 
-def normalize_amount(value: Any) -> float:
+def normalize_amount(value: str | int | float | None) -> float:
     """Normalize an amount read from Excel/CSV into a float."""
     if pd.isna(value):
         raise ValueError("Null or invalid amount")

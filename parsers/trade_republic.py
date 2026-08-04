@@ -60,7 +60,7 @@ class TradeRepublicParser(BaseParser):
         return result_df[STANDARD_COLUMNS]
 
     @staticmethod
-    def _clean_text(value: Any) -> str:
+    def _clean_text(value: object) -> str:
         if value is None or pd.isna(value):
             return ""
         text = str(value).strip()
@@ -69,7 +69,7 @@ class TradeRepublicParser(BaseParser):
         text = re.sub(r"\s*null\s*$", "", text, flags=re.IGNORECASE).strip()
         return text
 
-    def _compose_description(self, desc_val: Any, name_val: Any, counterparty_val: Any) -> str:
+    def _compose_description(self, desc_val: object, name_val: object, counterparty_val: object) -> str:
         desc_text = self._clean_text(desc_val)
         name_text = self._clean_text(name_val)
         cp_text = self._clean_text(counterparty_val)
@@ -83,7 +83,7 @@ class TradeRepublicParser(BaseParser):
         parts = [p for p in (name_text, cp_text) if p]
         return " - ".join(parts)
 
-    def _compose_fallback_description(self, type_val: Any, name_val: Any, counterparty_val: Any) -> str:
+    def _compose_fallback_description(self, type_val: object, name_val: object, counterparty_val: object) -> str:
         type_text = self._clean_text(type_val)
         name_text = self._clean_text(name_val)
         cp_text = self._clean_text(counterparty_val)

@@ -1,10 +1,14 @@
 import logging
-from typing import Any, Protocol
+
+import gspread
 
 from categorization import TransactionCategorizer
 from settings import CREDENTIALS_FILE, SPREADSHEET_NAME, WORKSHEET_TRANSACTIONS
 
 logger = logging.getLogger(__name__)
+
+SheetCell = str | int | float | bool | None
+SheetRow = list[SheetCell]
 
 # Global constants for sheet headers
 HEADER_ID = "id"
@@ -28,15 +32,6 @@ STANDARD_HEADERS = [
 ]
 
 MANDATORY_HEADERS = [HEADER_CATEGORY, HEADER_AMOUNT, HEADER_DESCRIPTION, HEADER_MANUAL]
-
-
-class WorksheetProtocol(Protocol):
-    """Protocol to abstract gspread operations useful for testing."""
-
-    def get_all_values(self) -> list[list[Any]]: ...
-    def update(self, range_name: str, values: list[list[Any]]) -> Any: ...
-    def clear(self) -> Any: ...
-    def append_row(self, values: list[Any]) -> Any: ...
 
 
 def _col_to_letter(col_idx: int) -> str:
@@ -66,16 +61,15 @@ class GoogleSheetsClient:
         return self.sheet.col_values(1)[1:]
 
     @staticmethod
-    def _is_manual_entry(raw_manual: str) -> bool:
+    def _is_manual_entry(raw_manual: str | bool | None) -> bool:
         """Normalize Google Sheets checkbox values to a boolean."""
         if isinstance(raw_manual, str):
             return raw_manual.strip().upper() == "TRUE"
-        else:
-            return bool(raw_manual)
+        return bool(raw_manual)
 
     def get_manual_overrides(self) -> dict[str, str]:
         """Return a mapping of transaction hash to saved manual category."""
-        all_values = self.sheet.get_all_values()
+        all_values: list[SheetRow] = self.sheet.get_all_values()
         if not all_values or len(all_values) <= 1:
             return {}
 
@@ -101,7 +95,7 @@ class GoogleSheetsClient:
 
         return manual_overrides
 
-    def append_rows(self, rows: list[list[Any]]) -> None:
+    def append_rows(self, rows: list[SheetRow]) -> None:
         self.sheet.append_rows(rows)
 
     def recategorize_existing(
@@ -109,7 +103,7 @@ class GoogleSheetsClient:
         categorizer: TransactionCategorizer,
     ) -> int:
         """Recategorize non-manual rows preserving user edits and return the number of truly updated rows."""
-        all_values = self.sheet.get_all_values()
+        all_values: list[SheetRow] = self.sheet.get_all_values()
         if not all_values or len(all_values) <= 1:
             return 0
 
@@ -178,7 +172,7 @@ class GoogleSheetsClient:
         return updated_count
     
     @staticmethod
-    def _parse_amount_safely(raw_amount: Any) -> float:
+    def _parse_amount_safely(raw_amount: object) -> float:
         """Helper to parse amount values robustly from sheet cells."""
         if raw_amount is None:
             return 0.0
@@ -197,15 +191,13 @@ class GoogleSheetsClient:
         except ValueError:
             return 0.0
 
-    def connect_to_sheets(self) -> Any:
+    def connect_to_sheets(self) -> gspread.Spreadsheet:
         """Open and return the Google Spreadsheet searching by NAME using CREDENTIALS_FILE."""
-        import gspread
-
         gc = gspread.service_account(filename=CREDENTIALS_FILE)
         return gc.open(SPREADSHEET_NAME)
 
 
-    def get_transaction_sheet(self, spreadsheet: Any) -> Any:
+    def get_transaction_sheet(self, spreadsheet: gspread.Spreadsheet) -> gspread.Worksheet:
         """Return the specific transaction worksheet."""
         return spreadsheet.worksheet(WORKSHEET_TRANSACTIONS)
 
