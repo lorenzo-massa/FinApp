@@ -233,19 +233,15 @@ class TestIsybankParser(BaseParserTest):
     def _get_standard_data(self) -> list[dict]:
         return [
             {
-                " Data ": "2026-07-23 10:30:00",
-                "Operation": "Pagamento",
-                "Dettagli ": "PIZZA",
-                "Conto": "Conto 1",
-                "Contabilizzazione": "2026-07-23",
-                "Categoria": "Ristoranti",
-                "Valuta": "EUR",
+                "Data": "2026-07-23 10:30:00",
+                "Operazione": "Pagamento",
+                "Dettagli": "PIZZA",
                 "Importo": "-12.34"
             }
         ]
 
     def test_parses_standard_row_values(self):
-        """Test standard behavior with English headers ('Operation')."""
+        """Test standard behavior with the real Isybank column names."""
         buffer = self._create_buffer(self._get_standard_data())
         df = self.parser_class(buffer).parse()
 
@@ -254,74 +250,47 @@ class TestIsybankParser(BaseParserTest):
         assert df.iloc[0]["description"] == "Pagamento"
         assert normalize_amount(df.iloc[0]["amount"]) == -12.34
 
-    def test_fallback_italian_headers(self):
-        """Test for real Italian files utilizing 'Operazione' or 'Dettagli'."""
+    def test_bonifico_uses_detail_suffix_after_disposto(self):
+        """Bonifico rows should append the text after 'disposto' from the Dettagli column."""
         buffer = self._create_buffer([
-            {"Data": "2026-07-20", "Operazione": "Bonifico", "Dettagli": "Affitto Luglio", "Importo": "+500,00"},
-            {"Data": "2026-07-21", "Operazione": "Stipendio", "Dettagli": "Azienda SRL", "Importo": "1500.50"}
+            {"Data": "2026-07-22", "Operazione": "Bonifico", "Dettagli": "Conto corrente disposto a Mario Rossi", "Importo": "+100.00"}
         ])
         df = self.parser_class(buffer).parse()
 
-        assert df.iloc[0]["description"] == "Bonifico"
-        assert normalize_amount(df.iloc[0]["amount"]) == 500.0
-        assert normalize_amount(df.iloc[1]["amount"]) == 1500.50
+        assert df.iloc[0]["description"] == "Bonifico a Mario Rossi"
 
-    def test_fallback_to_descrizione_column(self):
-        """Fallback test for the 'Descrizione' column if others are missing."""
+    def test_raises_keyerror_on_missing_mandatory_columns(self):
+        """Verify that a KeyError is raised when any required Isybank column is missing."""
         buffer = self._create_buffer([
-            {"Data": "2026-07-01", "Descrizione": "Spesa Supermercato", "Importo": "-45.10"}
+            {"Data": "2026-07-01", "Importo": "-10.00"}
         ])
-        df = self.parser_class(buffer).parse()
-
-        assert df.iloc[0]["description"] == "Spesa Supermercato"
+        with pytest.raises(KeyError, match="Mandatory column 'Operazione'"):
+            self.parser_class(buffer).parse()
 
     def test_handles_dirty_dates_and_missing_values(self):
-        """Verifies cleaning of times in dates and handling of empty/NaN fields."""
+        """Verifies cleaning of times in dates and handling of empty/NaN values in the real Isybank schema."""
         buffer = self._create_buffer([
-            {"Data": "2026-01-15T18:45:00", "Operation": None, "Importo": "-10.00"},
-            {"Data": "2026-02-20 00:00:00", "Operation": "  Caffè  ", "Importo": "-1.20"}
+            {"Data": "2026-01-15T18:45:00", "Operazione": None, "Dettagli": "", "Importo": "-10.00"},
+            {"Data": "2026-02-20 00:00:00", "Operazione": "  Caffè  ", "Dettagli": "", "Importo": "-1.20"}
         ])
         df = self.parser_class(buffer).parse()
 
         assert df.iloc[0]["date"] == "2026-01-15"
         assert df.iloc[1]["date"] == "2026-02-20"
-        
-        # Ensure None transformed to empty string and stripped correctly
         assert df.iloc[0]["description"] == ""
         assert df.iloc[1]["description"] == "Caffè"
-
-    def test_raises_keyerror_on_missing_description(self):
-        """Verifies that a KeyError is raised if no valid description column is found."""
-        buffer = self._create_buffer([
-            {"Data": "2026-07-01", "Conto": "Conto 1", "Importo": "-10.00"}
-        ])
-        with pytest.raises(KeyError, match="No suitable description column found"):
-            self.parser_class(buffer).parse()
 
     def test_drops_rows_with_invalid_or_missing_dates(self):
         """Verify that rows with unparseable or missing dates are automatically dropped."""
         buffer = self._create_buffer([
-            {"Data": "2026-07-23", "Operation": "Valid Row", "Importo": "-10.00"},
-            {"Data": "Invalid Date", "Operation": "Summary Row", "Importo": "-100.00"},
-            {
-                # Missing Data row entirely
-                "Operation": "Missing Date Row", 
-                "Importo": "-5.00"
-            }
+            {"Data": "2026-07-23", "Operazione": "Valid Row", "Dettagli": "", "Importo": "-10.00"},
+            {"Data": "Invalid Date", "Operazione": "Summary Row", "Dettagli": "", "Importo": "-100.00"},
+            {"Operazione": "Missing Date Row", "Dettagli": "", "Importo": "-5.00"}
         ])
         df = self.parser_class(buffer).parse()
 
-        # Only the valid row should remain
         assert len(df) == 1
         assert df.iloc[0]["description"] == "Valid Row"
-
-    def test_raises_keyerror_on_missing_mandatory_columns(self):
-        """Verify that a KeyError is raised if 'Data' or 'Importo' columns are completely missing."""
-        buffer = self._create_buffer([
-            {"Operation": "Only description", "Conto": "Conto 1"}
-        ])
-        with pytest.raises(KeyError, match="Mandatory column"):
-            self.parser_class(buffer).parse()
 
 
 # ==========================================

@@ -1,4 +1,6 @@
+import re
 import warnings
+
 import pandas as pd
 
 from .base import BaseParser
@@ -9,7 +11,6 @@ class IsybankParser(BaseParser):
     """Parser implementation for Isybank Excel files."""
 
     BANK_LABEL = "Isybank"
-    DESCRIPTION_CANDIDATES = ["Operation", "Operazione", "Dettagli", "Descrizione"]
 
     def parse(self) -> pd.DataFrame:
         with warnings.catch_warnings():
@@ -18,18 +19,21 @@ class IsybankParser(BaseParser):
 
         df.columns = [str(col).strip() for col in df.columns]
 
-        for col in ["Data", "Importo"]:
+        for col in ["Data", "Operazione", "Dettagli", "Importo"]:
             if col not in df.columns:
                 raise KeyError(f"Mandatory column '{col}' not found in Isybank Excel file.")
 
-        desc_col = self._get_description_column(df.columns)
+        desc_series = []
+        for _, row in df.iterrows():
+            description = self._clean_text(row.get("Operazione"))
+            detail = self._clean_text(row.get("Dettagli"))
+            description = self._compose_description(description, detail)
+            desc_series.append(description)
 
         date_series = (
             pd.to_datetime(df["Data"], format="mixed", errors="coerce")
             .dt.strftime("%Y-%m-%d")
         )
-
-        desc_series = df[desc_col].fillna("").astype(str).str.strip()
         amount_series = df["Importo"].apply(normalize_amount)
 
         result_df = pd.DataFrame({
@@ -41,13 +45,16 @@ class IsybankParser(BaseParser):
         result_df = result_df.dropna(subset=[COL_DATE, COL_AMOUNT])
         return result_df[STANDARD_COLUMNS]
 
-    def _get_description_column(self, columns: pd.Index) -> str:
-        for name in self.DESCRIPTION_CANDIDATES:
-            if name in columns:
-                return name
-            
-        for col in columns:
-            if str(col).strip().lower() in [c.lower() for c in self.DESCRIPTION_CANDIDATES]:
-                return col
-                
-        raise KeyError("No suitable description column found in the Isybank Excel file.")
+    @staticmethod
+    def _clean_text(value) -> str:
+        if pd.isna(value):
+            return ""
+        return str(value).strip()
+
+    @staticmethod
+    def _compose_description(description: str, detail: str) -> str:
+        if "bonifico" in description.lower():
+            match = re.search(r"disposto\s+(.*)", detail, flags=re.IGNORECASE)
+            if match:
+                return f"{description} {match.group(1).strip()}"
+        return description
