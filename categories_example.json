@@ -1,0 +1,15 @@
+{
+  "rules": {
+    "Salary": ["PAYSLIP", "SALARY"],
+    "Groceries": ["SUPERMARKET"],
+    "Transport": ["TRAIN", "BUS", "TAXI"],
+    "Housing": ["RENT", "MORTGAGE"],
+    "Subscriptions": ["NETFLIX", "SPOTIFY", "AMAZON PRIME", "DISNEY"],
+    "Shopping": ["AMAZON", "EBAY"],
+    "Health": ["PHARMACY", "DOCTOR", "HOSPITAL"],
+    "Utilities": ["WATER", "GAS", "LIGHT"],
+    "Travel": ["HOTEL", "AIRBNB", "BOOKING"]
+  },
+  "default_income": "Income",
+  "default_expense": "Other Expense"
+}
