@@ -53,12 +53,18 @@ def process_files(
 
     for filepath in files:
         logger.info("Processing file: %s", filepath.name)
+        file_new_rows = 0
 
         try:
             df, bank_label = parse_bank_file(filepath)
 
-            for _, row in df.iterrows():
+            for row_index, row in df.iterrows():
                 if row[COL_DATE] is None or row[COL_AMOUNT] is None:
+                    logger.warning(
+                        "Skipping row %s in %s: missing date or amount",
+                        row_index,
+                        filepath.name,
+                    )
                     continue
 
                 date_obj = row[COL_DATE]
@@ -69,6 +75,11 @@ def process_files(
                 )
 
                 if hash_val in existing_hashes:
+                    logger.info(
+                        "Skipping duplicate row %s in %s: hash already exists",
+                        row_index,
+                        filepath.name,
+                    )
                     continue
 
                 saved_manual_category = manual_overrides.get(hash_val)
@@ -91,7 +102,14 @@ def process_files(
                         is_manual,
                     ]
                 )
+                file_new_rows += 1
                 existing_hashes.add(hash_val)
+
+            logger.info(
+                "Added %s new rows from %s",
+                file_new_rows,
+                filepath.name,
+            )
 
         except Exception as exc:
             logger.error("Error processing %s: %s", filepath.name, exc)
@@ -125,11 +143,14 @@ def main() -> None:
 
         logger.info("Connecting to Google Sheets...")
         client = GoogleSheetsClient()
-        
-        logger.info("Recategorizing existing transactions...")
+
+        logger.info("Starting recategorization of existing transactions...")
         updated_count = client.recategorize_existing(categorizer)
-        
-        logger.info("Successfully updated categories for %s transaction(s).", updated_count)
+
+        logger.info(
+            "Recategorization finished. %s transaction(s) were updated.",
+            updated_count,
+        )
     elif choice == "3":
         confirm = (
             input(

@@ -1,7 +1,10 @@
+import logging
 from typing import Any, Protocol
 
 from categorization import TransactionCategorizer
 from settings import CREDENTIALS_FILE, SPREADSHEET_NAME, WORKSHEET_TRANSACTIONS
+
+logger = logging.getLogger(__name__)
 
 # Global constants for sheet headers
 HEADER_ID = "id"
@@ -125,15 +128,17 @@ class GoogleSheetsClient:
         data_rows = all_values[1:]
         updated_categories: list[list[str]] = []
         updated_count = 0
+        processed_rows = 0
+        skipped_manual_rows = 0
 
-        for row in data_rows:
+        for row_index, row in enumerate(data_rows, start=2):
             current_category = (
                 row[col_category] if col_category < len(row) else ""
             )
-            
-            # Robust handling of Google Sheets checkboxes (supports both booleans and strings)
+
             raw_manual = row[col_manual] if col_manual < len(row) else False
             if self._is_manual_entry(raw_manual):
+                skipped_manual_rows += 1
                 updated_categories.append([current_category])
                 continue
 
@@ -143,17 +148,24 @@ class GoogleSheetsClient:
             raw_amount = row[col_amount] if col_amount < len(row) else "0"
 
             amount = self._parse_amount_safely(raw_amount)
-
             new_category = categorizer.categorize(description, amount)
-            
-            # Check if the category actually changed
+            processed_rows += 1
+
             if new_category != current_category:
                 updated_count += 1
 
             updated_categories.append([new_category])
 
         if not updated_categories:
+            logger.info("No rows were available to recategorize.")
             return 0
+
+        logger.info(
+            "Processed %s rows for recategorization; skipped %s manual rows; updated %s rows.",
+            processed_rows,
+            skipped_manual_rows,
+            updated_count,
+        )
 
         start_row = 2
         end_row = start_row + len(updated_categories) - 1
