@@ -2,14 +2,18 @@ from pathlib import Path
 import pandas as pd
 
 from .base import BaseParser
+from .directa import DirectaParser
 from .isybank import IsybankParser
 from .trade_republic import TradeRepublicParser
+
 
 def parse_bank_file(filepath: Path) -> tuple[pd.DataFrame, str]:
     """Select and execute the correct parser based on file type."""
     filename = filepath.name.lower()
 
-    if filename.endswith(".csv") or "trade" in filename:
+    if "directa" in filename:
+        parser = DirectaParser(filepath)
+    elif filename.endswith(".csv") or "trade" in filename:
         parser = TradeRepublicParser(filepath)
     else:
         parser = IsybankParser(filepath)
@@ -18,6 +22,8 @@ def parse_bank_file(filepath: Path) -> tuple[pd.DataFrame, str]:
 
 __all__ = [
     "BaseParser",
+    "DirectaParser",
     "IsybankParser",
-    "TradeRepublicParser"
+    "TradeRepublicParser",
+    "parse_bank_file",
 ]

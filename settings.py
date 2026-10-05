@@ -14,3 +14,4 @@ SCOPES = [
 SPREADSHEET_NAME = "FinApp"
 WORKSHEET_TRANSACTIONS = "Transactions"
 WORKSHEET_CATEGORIES = "Categories"
+WORKSHEET_DIRECTA = "Investments operations"

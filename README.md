@@ -3,30 +3,42 @@
 ![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-A Python-based CLI tool for automating personal finance tracking. FinApp ingests bank export files, normalizes transaction data, applies custom categorization rules, and syncs everything to a Google Sheets worksheet.
+FinApp is a Python-based personal finance ingestor that reads bank and investment export files, normalizes them, and syncs the resulting rows to Google Sheets. The project currently supports standard transactions and a dedicated Directa investment-operations flow.
 
 ## ✨ Features
 
-- **Multi-Bank Parsing:** Parsing and normalization for real-world bank export layouts (e.g., Isybank, Trade Republic).
-- **Smart Categorization:** Rule-based category assignment driven by a highly configurable JSON file.
-- **Google Sheets Sync:** Directly appends new transactions to your cloud spreadsheet avoiding duplicates.
-- **Interactive CLI:** Command-line interface for daily syncing, category updates, or full resets.
-- **Data Integrity:** Hashing mechanism to prevent duplicate entries during consecutive syncs.
-- **Test Coverage:** Automated testing to ensure parser stability.
+- **Multi-bank parsing:** supports common export layouts such as Isybank and Trade Republic.
+- **Directa support:** imports Directa investment operations into a dedicated sheet separate from regular transactions.
+- **Smart categorization:** applies rules from a configurable JSON file to bank transactions.
+- **Google Sheets sync:** appends only the rows that are new based on a stable transaction hash.
+- **Data integrity:** prevents duplicate inserts by hashing rows before upload.
+- **Manual override support:** preserves category overrides on rows marked as manual.
+- **Regression tests:** validates parsing and core upload logic.
 
 ---
 
 ## 📂 Project Structure
 
 ```text
-├── input/               # Directory for raw bank exports (ignored by git)
-├── parsers/             # Logic for parsing and normalizing different bank formats
-├── categorization.py    # Category resolution based on JSON rules
-├── cli.py               # Interactive command-line entrypoint
-├── google_sheets.py     # Google Sheets connection and worksheet operations
-├── ingest_sheets.py     # Main application runner
-├── settings.py          # Central configuration and constants
-└── tests/               # Test suite
+├── input/                     # raw CSV/XLS/XLSX files to import
+├── parsers/                   # bank-specific parsers and shared normalization helpers
+│   ├── __init__.py
+│   ├── base.py
+│   ├── isybank.py
+│   ├── trade_republic.py
+│   └── utils.py
+├── categories.json            # local category rules used at runtime
+├── categories_example.json    # sample category configuration
+├── categorization.py          # rule-based categorizer
+├── cli.py                     # interactive command-line entrypoint
+├── credentials.json           # local Google service-account credentials
+├── credentials_example.json   # sample credentials template
+├── google_sheets.py           # Google Sheets client and sheet helpers
+├── settings.py                # spreadsheet and worksheet configuration
+├── tests/                     # pytest regression tests
+├── requirements.txt           # Python dependencies
+├── README.md                  # project documentation
+└── .venv/                     # local virtual environment (not committed)
 ```
 
 ---
@@ -35,35 +47,36 @@ A Python-based CLI tool for automating personal finance tracking. FinApp ingests
 
 ### Prerequisites
 
-* **Python 3.11** or higher.
-* A **Google Cloud Project** with the Google Sheets API enabled.
-* A **Service Account** with access to your target Google Sheet.
+- **Python 3.11**
+- A Google Cloud project with the Google Sheets API enabled
+- A service account key downloaded as a JSON file
+- A spreadsheet named `FinApp` (or adjust the name in `settings.py`)
 
-### 1. Installation
-
-Clone the repository and set up your virtual environment:
+### 1. Install the project
 
 ```bash
-git clone [https://github.com/lorenzo-massa/FinApp.git](https://github.com/lorenzo-massa/FinApp.git)
+git clone https://github.com/lorenzo-massa/FinApp.git
 cd FinApp
 
-# Create and activate virtual environment (Windows)
+# Windows
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# (On macOS/Linux use: source .venv/bin/activate)
+# macOS/Linux
+# source .venv/bin/activate
 
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Configuration
+### 2. Configure local files
 
-Before running the application, you need to set up your local configuration files (these are ignored by Git for security reasons):
+Create the files that are intentionally not committed:
 
-1. **Google Credentials:** Download your Service Account JSON key from Google Cloud Console, rename it to `credentials.json`, and place it in the root directory.
-2. **Share the Sheet:** Open your target Google Sheet (`FinApp` by default) and share it with the email address of your Service Account (e.g., `your-bot@your-project.iam.gserviceaccount.com`) granting *Editor* permissions.
-3. **Categorization Rules:** Create a `categories.json` file in the root directory. You can use the following structure as a template:
+1. `credentials.json` - the Google service account JSON key
+2. `categories.json` - your categorization rules
+3. `input/*.csv` or `*.xlsx` - files to import
+
+Example `categories.json` structure:
 
 ```json
 {
@@ -72,51 +85,67 @@ Before running the application, you need to set up your local configuration file
     "Salary": ["PAYROLL", "SALARY"],
     "Utilities": ["ELECTRICITY", "WATER"]
   },
-  "default_income": "Pther Income",
+  "default_income": "Other Income",
   "default_expense": "Other Expenses"
 }
 ```
+
+Share the target spreadsheet with the service account email and grant Editor access.
 
 ---
 
 ## 💻 Usage
 
-Place your raw bank export files (`.xls`, `.xlsx`, or `.csv`) into the `input/` directory, then run the CLI:
+Run the CLI with the project virtual environment active:
 
 ```bash
-python ingest_sheets.py
+python cli.py
 ```
 
-### Interactive Menu Options:
+On Windows it is also common to use the project venv explicitly:
 
-1. **Sync new transactions (Default):** Imports files from `input/`, calculates hashes, and appends *only* the new transactions to Google Sheets.
-2. **Update Categories (Fast):** Re-reads existing transactions from Google Sheets and applies the latest rules from `categories.json` (preserves rows marked as "Manual").
-3. **Full reset and reload:** Clears the `Transactions` worksheet completely and re-imports all files from scratch.
+```bash
+.\.venv\Scripts\python.exe .\cli.py
+```
 
-### Real-world Workflow
+### Interactive menu
+
+1. **Sync new transactions**: imports standard bank files from `input/` into the `Transactions` sheet.
+2. **Sync Directa operations**: imports only Directa files into the dedicated `Investments operations` sheet.
+3. **Update Categories (Fast)**: re-applies the rules from `categories.json` without touching manual edits.
+4. **Reset and reload while preserving manual overrides**: clears and re-imports transaction rows while keeping manual categories.
+5. **Full reset and reload**: clears the `Transactions` sheet and reloads all standard files.
+
+### Transactions workflow
 
 1. Download your latest bank statements and drop them into `input/`.
-2. Run the script and choose Option `1`.
-3. If you notice uncategorized items in Google Sheets, add the relevant keywords to your `categories.json`.
-4. Run the script again and choose Option `2` to retroactively apply the new categories.
+2. Run the CLI and choose option `1` to sync standard transactions.
+3. If you notice uncategorized items, update the keywords in `categories.json`.
+4. Run the CLI again and choose option `3` to recategorize the existing rows while preserving manual overrides.
+
+### Directa workflow
+
+Directa rows are treated separately from normal bank transactions. They are written to `Investments operations`, and their `Id` column is populated with a stable hash so repeated imports do not duplicate rows.
+
+The Directa import path is intentionally distinct from the normal transaction sync and should not be mixed with the standard `Transactions` flow.
 
 ---
 
 ## 🧪 Testing
 
-The automated tests use in-memory fixtures to exercise the parser behavior deterministically, ensuring that real financial data is not required for testing.
+The project uses `pytest` for regression coverage.
 
-To run the regression suite:
+Run the suite with the local virtual environment:
 
 ```bash
-python -m pytest -q
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
 ---
 
 ## 🤝 Contributing
 
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/lorenzo-massa/FinApp/issues).
+Contributions, issues, and feature requests are welcome.
 
 ## 📝 License
 

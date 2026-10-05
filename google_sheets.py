@@ -3,7 +3,7 @@ import logging
 import gspread
 
 from categorization import TransactionCategorizer
-from settings import CREDENTIALS_FILE, SPREADSHEET_NAME, WORKSHEET_TRANSACTIONS
+from settings import CREDENTIALS_FILE, SPREADSHEET_NAME, WORKSHEET_DIRECTA, WORKSHEET_TRANSACTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,22 @@ STANDARD_HEADERS = [
     HEADER_MANUAL,
 ]
 
+DIRECTA_HEADERS = [
+    "Id",
+    "Date",
+    "Value_date",
+    "Operation_type",
+    "Ticker",
+    "Isin",
+    "Description",
+    "Quantity",
+    "Amount_eur",
+    "Amount_foreign",
+    "Currency",
+    "Movement",
+    "Order_reference",
+]
+
 MANDATORY_HEADERS = [HEADER_CATEGORY, HEADER_AMOUNT, HEADER_DESCRIPTION, HEADER_MANUAL]
 
 
@@ -44,8 +60,9 @@ class GoogleSheetsClient:
 
     def __init__(self) -> None:
         spreadsheet = self.connect_to_sheets()
-        sheet = self.get_transaction_sheet(spreadsheet)
-        self.sheet = sheet
+        self.spreadsheet = spreadsheet
+        self.sheet = self.get_transaction_sheet(spreadsheet)
+        self.directa_sheet = self.get_directa_sheet(spreadsheet)
 
     def clear(self) -> None:
         """Clear the worksheet keeping only the header row."""
@@ -57,8 +74,9 @@ class GoogleSheetsClient:
         self.sheet.clear()
         self.sheet.append_row(headers)
 
-    def get_hashes(self) -> list[str]:
-        return self.sheet.col_values(1)[1:]
+    def get_hashes(self, worksheet: gspread.Worksheet | None = None) -> list[str]:
+        target_sheet = worksheet if worksheet is not None else self.sheet
+        return target_sheet.col_values(1)[1:]
 
     @staticmethod
     def _is_manual_entry(raw_manual: str | bool | None) -> bool:
@@ -95,8 +113,13 @@ class GoogleSheetsClient:
 
         return manual_overrides
 
-    def append_rows(self, rows: list[SheetRow]) -> None:
-        self.sheet.append_rows(rows)
+    def append_rows(
+        self,
+        rows: list[SheetRow],
+        worksheet: gspread.Worksheet | None = None,
+    ) -> None:
+        target_sheet = worksheet if worksheet is not None else self.sheet
+        target_sheet.append_rows(rows)
 
     def recategorize_existing(
         self,
@@ -198,8 +221,12 @@ class GoogleSheetsClient:
 
 
     def get_transaction_sheet(self, spreadsheet: gspread.Spreadsheet) -> gspread.Worksheet:
-        """Return the specific transaction worksheet."""
+        """Return the existing Transactions worksheet."""
         return spreadsheet.worksheet(WORKSHEET_TRANSACTIONS)
+
+    def get_directa_sheet(self, spreadsheet: gspread.Spreadsheet) -> gspread.Worksheet:
+        """Return the existing Investments operations worksheet."""
+        return spreadsheet.worksheet(WORKSHEET_DIRECTA)
 
 
 

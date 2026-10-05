@@ -13,6 +13,7 @@ credentials.json
 categories.json
 *.csv
 *.xlsx
+*.ini
 
 # Test artifacts
 .pytest_cache/

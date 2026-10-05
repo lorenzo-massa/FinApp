@@ -1,6 +1,7 @@
 import pandas as pd
 import pytest
 import json
+import csv
 from io import BytesIO, StringIO
 from unittest.mock import MagicMock, patch
 
@@ -12,9 +13,9 @@ from categorization import (
 )
 from google_sheets import (
     GoogleSheetsClient,
-    STANDARD_HEADERS
-) 
-from parsers import IsybankParser, TradeRepublicParser
+    STANDARD_HEADERS,
+)
+from parsers import DirectaParser, IsybankParser, TradeRepublicParser
 from parsers.utils import normalize_amount
 
 
@@ -48,10 +49,14 @@ class BaseParserTest:
     """Base test class providing common test structure and mocking interface for all parsers."""
     
     parser_class = None
+    expected_columns = ["date", "description", "amount"]
 
     def _create_buffer(self, data: list[dict]):
         """Convert a list of dictionaries into the appropriate file buffer (CSV/Excel)."""
         raise NotImplementedError("Subclasses must implement _create_buffer")
+
+    def _parse_data(self, data: list[dict], tmp_path):
+        return self.parser_class(self._create_buffer(data)).parse()
 
     def _get_standard_data(self) -> list[dict]:
         """Return standard valid mock data specific to the parser."""
@@ -59,18 +64,19 @@ class BaseParserTest:
 
     # --- Common Tests for all parsers ---
 
-    def test_returns_standard_columns(self):
-        """All parsers must return exactly ['date', 'description', 'amount'] columns."""
-        buffer = self._create_buffer(self._get_standard_data())
-        df = self.parser_class(buffer).parse()
+    def test_returns_expected_columns(self, tmp_path):
+        """Each parser returns its normalized output columns in a stable order."""
+        df = self._parse_data(self._get_standard_data(), tmp_path)
         
-        assert list(df.columns) == ["date", "description", "amount"]
+        assert list(df.columns) == self.expected_columns
 
-    def test_raises_error_on_completely_invalid_data(self):
+    def test_raises_error_on_completely_invalid_data(self, tmp_path):
         """All parsers should fail gracefully when essential columns are missing."""
-        buffer = self._create_buffer([{"random_column": "123", "another_column": "456"}])
         with pytest.raises((ValueError, KeyError)):
-            self.parser_class(buffer).parse()
+            self._parse_data(
+                [{"random_column": "123", "another_column": "456"}],
+                tmp_path,
+            )
 
 
 # ==========================================
@@ -95,8 +101,8 @@ class TestTradeRepublicParser(BaseParserTest):
                 "category": "buy",
                 "type": "Buy",
                 "amount": "12.34",
-                "description": "Example transaction",
-                "name": "Example",
+                "description": "Synthetic test transaction",
+                "name": "Fixture Example",
                 "counterparty_name": "",
                 "currency": "EUR"
             }
@@ -107,7 +113,7 @@ class TestTradeRepublicParser(BaseParserTest):
         df = self.parser_class(buffer).parse()
 
         assert len(df) == 1
-        assert df.iloc[0]["description"] == "Example transaction"
+        assert df.iloc[0]["description"] == "Synthetic test transaction - Fixture Example"
         assert normalize_amount(df.iloc[0]["amount"]) == 12.34
 
     def test_strips_literal_null_suffix_from_description(self):
@@ -122,49 +128,49 @@ class TestTradeRepublicParser(BaseParserTest):
             {
                 "date": "2026-07-23", 
                 "amount": "12.34", 
-                "name": "Example", 
+                "name": "Fixture Example", 
                 "type": "Buy", 
-                "counterparty_name": "Merchant Srl"
+                "counterparty_name": "Fixture Merchant"
             }
         ])
         df = self.parser_class(buffer).parse()
-        assert df.iloc[0]["description"] == "Buy - Example - Merchant Srl"
+        assert df.iloc[0]["description"] == "Buy - Fixture Example - Fixture Merchant"
 
     def test_appends_full_name_when_description_is_truncated(self):
         buffer = self._create_buffer([
             {
                 "date": "2026-06-29",
                 "amount": "-5.000000",
-                "name": "GRUPPO TORINESE TRASPORTI",
-                "description": "GRUPPO TORINESE TRASPO",
+                "name": "TEST MERCHANT HOLDINGS",
+                "description": "TEST MERCHANT HOLD",
             }
         ])
         df = self.parser_class(buffer).parse()
-        assert df.iloc[0]["description"] == "GRUPPO TORINESE TRASPO - GRUPPO TORINESE TRASPORTI"
+        assert df.iloc[0]["description"] == "TEST MERCHANT HOLD - TEST MERCHANT HOLDINGS"
 
     def test_keeps_existing_description_and_appends_only_missing_context(self):
         buffer = self._create_buffer([
             {
                 "date": "2026-07-23",
                 "amount": "12.34",
-                "description": "Example transaction",
-                "counterparty_name": "Merchant Srl",
+                "description": "Synthetic test transaction",
+                "counterparty_name": "Fixture Merchant",
             }
         ])
         df = self.parser_class(buffer).parse()
-        assert df.iloc[0]["description"] == "Example transaction - Merchant Srl"
+        assert df.iloc[0]["description"] == "Synthetic test transaction - Fixture Merchant"
 
     def test_ignores_fake_empty_counterparty_values(self):
         buffer = self._create_buffer([
             {
                 "date": "2026-07-23",
                 "amount": "12.34",
-                "description": "Example transaction",
+                "description": "Synthetic test transaction",
                 "counterparty_name": "null",
             }
         ])
         df = self.parser_class(buffer).parse()
-        assert df.iloc[0]["description"] == "Example transaction"
+        assert df.iloc[0]["description"] == "Synthetic test transaction"
 
     def test_falls_back_to_counterparty_when_description_is_missing(self):
         buffer = self._create_buffer([
@@ -172,11 +178,11 @@ class TestTradeRepublicParser(BaseParserTest):
                 "date": "2026-07-23",
                 "amount": "12.34",
                 "description": "",
-                "counterparty_name": "Merchant Srl",
+                "counterparty_name": "Fixture Merchant",
             }
         ])
         df = self.parser_class(buffer).parse()
-        assert df.iloc[0]["description"] == "Merchant Srl"
+        assert df.iloc[0]["description"] == "Fixture Merchant"
 
     def test_raises_value_error_on_missing_columns(self):
         buffer = self._create_buffer([{"random_column": "123", "description": "No date or amount"}])
@@ -198,8 +204,8 @@ class TestTradeRepublicParser(BaseParserTest):
                     "date": "2026-07-23",
                     "amount": "50.00",
                     "type": "SAVINGS_PLAN",
-                    "name": "ETF Core",
-                    "counterparty_name": "Lang & Schwarz",
+                    "name": "Fixture ETF",
+                    "counterparty_name": "Synthetic Broker",
                     # Note: no 'description' column provided at all
                 }
             ]
@@ -208,7 +214,89 @@ class TestTradeRepublicParser(BaseParserTest):
         df = self.parser_class(buffer).parse()
 
         assert len(df) == 1
-        assert df.iloc[0]["description"] == "SAVINGS_PLAN - ETF Core - Lang & Schwarz"
+        assert df.iloc[0]["description"] == "SAVINGS_PLAN - Fixture ETF - Synthetic Broker"
+
+
+class TestDirectaParser(BaseParserTest):
+    """Specific tests for the Directa CSV parser."""
+
+    parser_class = DirectaParser
+    expected_columns = [
+        "date",
+        "value_date",
+        "operation_type",
+        "ticker",
+        "isin",
+        "description",
+        "quantity",
+        "amount_eur",
+        "amount_foreign",
+        "currency",
+        "movement",
+        "order_reference",
+    ]
+
+    def _get_standard_data(self) -> list[dict]:
+        return [
+            {
+                "Data operazione": "11-11-2026",
+                "Data valuta": "12-11-2026",
+                "Tipo operazione": "Acquisto",
+                "Ticker": "FAKE1",
+                "Isin": "IT0000000001",
+                "Protocollo": "",
+                "Descrizione": "Synthetic equity sample position",
+                "Quantità": "1",
+                "Importo euro": "-39,64",
+                "Importo Divisa": "0",
+                "Divisa": "EUR",
+                "Riferimento ordine": "FAKE-ORDER-001",
+            },
+            {
+                "Data operazione": "18-08-2026",
+                "Data valuta": "18-08-2026",
+                "Tipo operazione": "Conferimento con bonifico",
+                "Ticker": "",
+                "Isin": "",
+                "Protocollo": "FAKE-PROTOCOL-002",
+                "Descrizione": "",
+                "Quantità": "0",
+                "Importo euro": "280",
+                "Importo Divisa": "0",
+                "Divisa": "EUR",
+                "Riferimento ordine": "",
+            },
+        ]
+
+    def _parse_data(self, data: list[dict], tmp_path):
+        csv_path = tmp_path / "directa_sample.csv"
+        buffer = StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=list(data[0]), delimiter=";")
+        writer.writeheader()
+        writer.writerows(data)
+        csv_path.write_text(
+            "\n".join(
+                [
+                    "Conto : P0000 YYYYY XXXXXXXX;;;;;;;;;;;",
+                    "Data estrazione : 4-10-2026 15:50:29;;;;;;;;;;;",
+                    ";;;;;;;;;;;",
+                    "Tutti i movimenti ordinati per Data Operazione;;;;;;;;;;;",
+                    buffer.getvalue().rstrip(),
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return self.parser_class(csv_path).parse()
+
+    def test_parses_directa_investment_rows(self, tmp_path):
+        df = self._parse_data(self._get_standard_data(), tmp_path)
+
+        assert df.iloc[0]["movement"] == "BUY"
+        assert df.iloc[0]["ticker"] == "FAKE1"
+        assert df.iloc[0]["quantity"] == 1.0
+        assert df.iloc[0]["amount_eur"] == -39.64
+        assert df.iloc[1]["movement"] == "CASH_TRANSFER"
+        assert df.iloc[1]["amount_eur"] == 280.0
 
 
 class TestIsybankParser(BaseParserTest):
@@ -235,7 +323,7 @@ class TestIsybankParser(BaseParserTest):
             {
                 "Data": "2026-07-23 10:30:00",
                 "Operazione": "Pagamento",
-                "Dettagli": "PIZZA",
+                "Dettagli": "SAMPLE PURCHASE",
                 "Importo": "-12.34"
             }
         ]
@@ -253,11 +341,11 @@ class TestIsybankParser(BaseParserTest):
     def test_bonifico_uses_detail_suffix_after_disposto(self):
         """Bonifico rows should append the text after 'disposto' from the Dettagli column."""
         buffer = self._create_buffer([
-            {"Data": "2026-07-22", "Operazione": "Bonifico", "Dettagli": "Conto corrente disposto a Mario Rossi", "Importo": "+100.00"}
+            {"Data": "2026-07-22", "Operazione": "Bonifico", "Dettagli": "Conto corrente disposto a Sample Client", "Importo": "+100.00"}
         ])
         df = self.parser_class(buffer).parse()
 
-        assert df.iloc[0]["description"] == "Bonifico a Mario Rossi"
+        assert df.iloc[0]["description"] == "Bonifico a Sample Client"
 
     def test_raises_keyerror_on_missing_mandatory_columns(self):
         """Verify that a KeyError is raised when any required Isybank column is missing."""
