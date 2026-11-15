@@ -47,7 +47,32 @@ class TradeRepublicParser(BaseParser):
             raise ValueError("Transaction found without any descriptive text.")
 
         date_series = pd.to_datetime(df[date_col], errors="coerce").dt.strftime("%Y-%m-%d")
-        amount_series = df[amount_col].apply(normalize_amount)
+
+        def resolve_amount(row: pd.Series) -> float:
+            amount = normalize_amount(row[amount_col])
+            if amount != 0:
+                return amount
+
+            for fallback_column in ("original_amount", "tax"):
+                fallback_value = row.get(fallback_column)
+                if fallback_value is None or pd.isna(fallback_value):
+                    continue
+
+                fallback_text = str(fallback_value).strip()
+                if not fallback_text:
+                    continue
+
+                try:
+                    fallback_amount = normalize_amount(fallback_text)
+                except ValueError:
+                    continue
+
+                if fallback_amount != 0:
+                    return fallback_amount
+
+            return amount
+
+        amount_series = df.apply(resolve_amount, axis=1)
 
         result_df = pd.DataFrame({
             COL_DATE: date_series,

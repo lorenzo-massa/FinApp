@@ -116,6 +116,26 @@ class TestTradeRepublicParser(BaseParserTest):
         assert df.iloc[0]["description"] == "Synthetic test transaction - Fixture Example"
         assert normalize_amount(df.iloc[0]["amount"]) == 12.34
 
+    def test_uses_available_fallback_amount_when_amount_is_zero(self):
+        buffer = self._create_buffer([
+            {
+                "date": "2026-10-13",
+                "amount": "0.000000",
+                "original_amount": "-1",
+                "description": "Stamp Duty Tax (Cash)",
+            },
+            {
+                "date": "2026-10-13",
+                "amount": "0.000000",
+                "tax": "-1",
+                "description": "Stamp Duty Tax (Portfolio)",
+            },
+        ])
+
+        df = self.parser_class(buffer).parse()
+
+        assert df["amount"].tolist() == [-1.0, -1.0]
+
     def test_strips_literal_null_suffix_from_description(self):
         buffer = self._create_buffer([
             {"date": "2026-07-23", "amount": "12.34", "description": "MCDONALD Snull"}
