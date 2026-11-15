@@ -429,6 +429,29 @@ class TestTransactionCategorizer:
 
         assert categorizer.categorize("STARBUCKS TORINO", -10.0) == "Ristoranti e Bar"
 
+    def test_regex_rules_support_exact_and_partial_case_insensitive_matches(self):
+        category_data = {
+            "rules": {
+                "Exact": ["^SAVINGS PLAN EXECUTION$"],
+                "Portfolio": [r"LU[0-9]{10}"],
+            },
+            "default_income": DEFAULT_INCOME_LABEL,
+            "default_expense": DEFAULT_EXPENSE_LABEL,
+        }
+        categorizer = TransactionCategorizer(category_data)
+
+        assert categorizer.categorize("Savings plan execution", -10.0) == "Exact"
+        assert categorizer.categorize(
+            "Savings plan execution LU0290358497 Xtrackers", -10.0
+        ) == "Portfolio"
+        assert categorizer.categorize(
+            "Savings plan execution extra", -10.0
+        ) == DEFAULT_EXPENSE_LABEL
+
+    def test_invalid_regex_rule_raises_descriptive_value_error(self):
+        with pytest.raises(ValueError, match="Invalid regex rule for category 'Portfolio'"):
+            TransactionCategorizer({"rules": {"Portfolio": ["["]}})
+
     def test_categorize_fallback_to_default_income_on_positive_amount(self):
         """Verify fallback to default income category when no rule matches and amount is positive."""
         category_data = {

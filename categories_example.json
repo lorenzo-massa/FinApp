@@ -8,7 +8,8 @@
     "Shopping": ["AMAZON", "EBAY"],
     "Health": ["PHARMACY", "DOCTOR", "HOSPITAL"],
     "Utilities": ["WATER", "GAS", "LIGHT"],
-    "Travel": ["HOTEL", "AIRBNB", "BOOKING"]
+    "Travel": ["HOTEL", "AIRBNB", "BOOKING"],
+    "Portfolio": ["^SAVINGS PLAN EXECUTION LU[0-9]{10}\\b.*$"]
   },
   "default_income": "Income",
   "default_expense": "Other Expense"

@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from typing import TypedDict
 
@@ -39,22 +40,32 @@ class TransactionCategorizer:
 
     def __init__(self, category_data: CategoryConfig) -> None:
         raw_rules = category_data.get("rules", {})
-        # Pre-convert keywords to uppercase for better performance and robustness
-        self.rules: dict[str, list[str]] = {
-            category: [kw.upper() for kw in keywords]
-            for category, keywords in raw_rules.items()
-        }
+        self.rules: dict[str, list[re.Pattern[str]]] = {}
+        for category, patterns in raw_rules.items():
+            compiled_patterns: list[re.Pattern[str]] = []
+            for pattern in patterns:
+                if not isinstance(pattern, str):
+                    raise ValueError(
+                        f"Invalid regex rule for category '{category}': pattern must be a string."
+                    )
+                try:
+                    compiled_patterns.append(re.compile(pattern, re.IGNORECASE))
+                except re.error as err:
+                    raise ValueError(
+                        f"Invalid regex rule for category '{category}': {err}"
+                    ) from err
+
+            self.rules[category] = compiled_patterns
+
         self.default_income: str = category_data.get("default_income", DEFAULT_INCOME_LABEL)
         self.default_expense: str = category_data.get("default_expense", DEFAULT_EXPENSE_LABEL)
 
     def categorize(self, description: str, amount: float) -> str:
         """Categorize a single transaction by description and amount."""
-        desc_upper = description.upper()
-
         # 1. Match specific rules
-        for category, keywords in self.rules.items():
-            for keyword in keywords:
-                if keyword in desc_upper:
+        for category, patterns in self.rules.items():
+            for pattern in patterns:
+                if pattern.search(description):
                     return category
 
         # 2. Fallback based on transaction direction

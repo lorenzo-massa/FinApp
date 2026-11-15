@@ -83,12 +83,15 @@ Example `categories.json` structure:
   "rules": {
     "Groceries": ["SUPERMARKET", "MARKET"],
     "Salary": ["PAYROLL", "SALARY"],
-    "Utilities": ["ELECTRICITY", "WATER"]
+    "Utilities": ["ELECTRICITY", "WATER"],
+    "Portfolio": ["^SAVINGS PLAN EXECUTION [0-9]{10}\\b.*$"]
   },
   "default_income": "Other Income",
   "default_expense": "Other Expenses"
 }
 ```
+
+Every string in `rules` is a Python regular expression, matched case-insensitively. Matching searches within the description, so an unanchored pattern can match a portion; use `^` and `$` to require the entire description to match. Escape regex metacharacters such as `.`, `+`, and `*` when you intend them literally. Categories and patterns are checked in listed order, and the first match determines the category.
 
 Share the target spreadsheet with the service account email and grant Editor access.
 
