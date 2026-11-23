@@ -747,6 +747,34 @@ class TestTransactionHashingAndDuplicates:
         assert len(new_rows) == 2
         assert new_rows[0][0] != new_rows[1][0]
 
+    def test_collect_new_rows_is_fully_idempotent_on_reimport(self, tmp_path):
+        """Re-importing the same file must result in 0 new rows."""
+        from cli import _collect_new_rows
+
+        csv_file = tmp_path / "account_statement.csv"
+        csv_file.write_text(
+            "date,amount,description\n"
+            "2026-01-15,-1.50,Coffee\n"
+            "2026-01-15,-1.50,Coffee\n",
+            encoding="utf-8",
+        )
+
+        def mock_builder(row, bank_label, filepath, row_index, seen_in_file):
+            key = (bank_label, str(row["date"]), float(row["amount"]), str(row["description"]).lower())
+            occ = seen_in_file.get(key, 0)
+            seen_in_file[key] = occ + 1
+            h = build_transaction_hash(bank_label, str(row["date"]), float(row["amount"]), str(row["description"]), occurrence=occ)
+            return h, [h, row["date"], float(row["amount"]), row["description"]]
+
+        existing = set()
+        run1_rows = _collect_new_rows([csv_file], existing, mock_builder)
+        assert len(run1_rows) == 2
+
+        # Second run with existing containing the hashes from run 1
+        run2_rows = _collect_new_rows([csv_file], existing, mock_builder)
+        assert len(run2_rows) == 0
+
+
 
 
 
