@@ -943,6 +943,57 @@ class TestAdvancedCategorizationRules:
             TransactionCategorizer(bad_rules)
 
 
+class TestRetryLogicAndSummary:
+    """Tests for API retry exponential backoff and execution summary."""
+
+    def test_retry_api_call_succeeds_first_try(self):
+        from google_sheets import retry_api_call
+
+        mock_func = MagicMock(return_value="success")
+        result = retry_api_call(mock_func)
+
+        assert result == "success"
+        assert mock_func.call_count == 1
+
+    def test_retry_api_call_retries_transient_error(self):
+        from google_sheets import retry_api_call
+
+        mock_func = MagicMock(side_effect=[Exception("429 RESOURCE_EXHAUSTED"), "recovered"])
+        result = retry_api_call(mock_func, initial_delay=0.01)
+
+        assert result == "recovered"
+        assert mock_func.call_count == 2
+
+    def test_retry_api_call_raises_on_non_transient_error(self):
+        from google_sheets import retry_api_call
+
+        mock_func = MagicMock(side_effect=ValueError("Invalid data format"))
+        with pytest.raises(ValueError):
+            retry_api_call(mock_func, initial_delay=0.01)
+
+        assert mock_func.call_count == 1
+
+    def test_print_execution_summary(self, capsys):
+        from cli import print_execution_summary
+
+        print_execution_summary(
+            source_name="test bank",
+            files_inspected=2,
+            files_successful=2,
+            new_rows_count=5,
+            duplicates_count=10,
+            dry_run=True,
+            archived_count=2,
+        )
+        captured = capsys.readouterr().out
+        assert "EXECUTION SUMMARY (test bank)" in captured
+        assert "DRY RUN" in captured
+        assert "New transactions added:  5" in captured
+        assert "Duplicates skipped:      10" in captured
+        assert "Files archived:          2" in captured
+
+
+
 
 
 

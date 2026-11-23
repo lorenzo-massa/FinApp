@@ -55,14 +55,53 @@ def archive_processed_files(files: list[Path], archive_dir: Path | None = None) 
         logger.info("Archived processed file: %s -> %s", file.name, dest.name)
 
 
+class CollectResult(tuple):
+    """Result container for collected rows and metadata with 2-tuple backwards compatibility."""
+
+    new_rows: list[list[object]]
+    successful_files: list[Path]
+    duplicates_count: int
+
+    def __new__(cls, new_rows: list[list[object]], successful_files: list[Path], duplicates_count: int = 0) -> "CollectResult":
+        obj = super().__new__(cls, (new_rows, successful_files))
+        obj.new_rows = new_rows
+        obj.successful_files = successful_files
+        obj.duplicates_count = duplicates_count
+        return obj
+
+
+def print_execution_summary(
+    source_name: str,
+    files_inspected: int,
+    files_successful: int,
+    new_rows_count: int,
+    duplicates_count: int,
+    dry_run: bool,
+    archived_count: int = 0,
+) -> None:
+    mode_label = "DRY RUN (simulation - no changes made)" if dry_run else "LIVE (changes saved to Google Sheets)"
+    print("\n" + "=" * 55)
+    print(f"📊 EXECUTION SUMMARY ({source_name})")
+    print("=" * 55)
+    print(f"• Mode:                    {mode_label}")
+    print(f"• Files inspected:         {files_inspected}")
+    print(f"• Files parsed:            {files_successful}")
+    print(f"• New transactions added:  {new_rows_count}")
+    print(f"• Duplicates skipped:      {duplicates_count}")
+    if archived_count > 0:
+        print(f"• Files archived:          {archived_count}")
+    print("=" * 55 + "\n")
+
+
 def _collect_new_rows(
     files: list[Path],
     existing_hashes: set[str],
     row_builder: RowBuilder,
     expected_bank_label: str | None = None,
-) -> tuple[list[list[object]], list[Path]]:
+) -> CollectResult:
     new_rows: list[list[object]] = []
     successful_files: list[Path] = []
+    duplicates_count = 0
 
     for filepath in files:
         logger.info("Processing file: %s", filepath.name)
@@ -86,6 +125,7 @@ def _collect_new_rows(
                         row_index,
                         filepath.name,
                     )
+                    duplicates_count += 1
                     continue
 
                 existing_hashes.add(row_hash)
@@ -97,7 +137,7 @@ def _collect_new_rows(
         except Exception as exc:
             logger.error("Error processing %s: %s", filepath.name, exc)
 
-    return new_rows, successful_files
+    return CollectResult(new_rows, successful_files, duplicates_count)
 
 
 def _sync_input_files(
@@ -115,13 +155,16 @@ def _sync_input_files(
         logger.warning("No %s files found in the 'input/' folder.", source_name)
         return []
 
-    new_rows, successful_files = _collect_new_rows(
+    collect_res = _collect_new_rows(
         files,
         existing_hashes,
         row_builder,
         expected_bank_label,
     )
+    new_rows, successful_files = collect_res.new_rows, collect_res.successful_files
+    duplicates_count = collect_res.duplicates_count
 
+    archived_count = 0
     if dry_run:
         logger.info("[DRY RUN] %s new %s row(s) detected (preview):", len(new_rows), source_name)
         for idx, row in enumerate(new_rows[:10], start=1):
@@ -131,6 +174,16 @@ def _sync_input_files(
             logger.info("  ... and %s more row(s).", len(new_rows) - 10)
         if archive:
             logger.info("[DRY RUN] Would archive %s processed file(s) to %s", len(successful_files), ARCHIVE_DIR)
+            archived_count = len(successful_files)
+        print_execution_summary(
+            source_name=source_name,
+            files_inspected=len(files),
+            files_successful=len(successful_files),
+            new_rows_count=len(new_rows),
+            duplicates_count=duplicates_count,
+            dry_run=True,
+            archived_count=archived_count,
+        )
         return new_rows
 
     if not new_rows:
@@ -142,6 +195,17 @@ def _sync_input_files(
 
     if archive and successful_files:
         archive_processed_files(successful_files)
+        archived_count = len(successful_files)
+
+    print_execution_summary(
+        source_name=source_name,
+        files_inspected=len(files),
+        files_successful=len(successful_files),
+        new_rows_count=len(new_rows),
+        duplicates_count=duplicates_count,
+        dry_run=False,
+        archived_count=archived_count,
+    )
 
     return new_rows
 

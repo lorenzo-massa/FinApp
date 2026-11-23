@@ -1,4 +1,7 @@
 import logging
+import time
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 import gspread
 
@@ -9,6 +12,40 @@ logger = logging.getLogger(__name__)
 
 SheetCell = str | int | float | bool | None
 SheetRow = list[SheetCell]
+T = TypeVar("T")
+
+
+def retry_api_call(
+    func: Callable[..., T],
+    *args: Any,
+    max_retries: int = 3,
+    initial_delay: float = 1.0,
+    backoff_factor: float = 2.0,
+    **kwargs: Any,
+) -> T:
+    """Execute a function with exponential backoff on transient network or API rate errors."""
+    delay = initial_delay
+    for attempt in range(1, max_retries + 1):
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:
+            err_str = str(exc).lower()
+            is_transient = any(
+                k in err_str
+                for k in ["429", "quota", "resource_exhausted", "500", "503", "timeout", "timed out", "connection"]
+            ) or "APIError" in type(exc).__name__
+
+            if attempt == max_retries or not is_transient:
+                raise
+            logger.warning(
+                "Google Sheets API call failed (%s). Retrying in %.1fs (attempt %s/%s)...",
+                exc,
+                delay,
+                attempt,
+                max_retries,
+            )
+            time.sleep(delay)
+            delay *= backoff_factor
 
 # Global constants for sheet headers
 HEADER_ID = "id"
@@ -73,17 +110,17 @@ class GoogleSheetsClient:
 
     def clear(self) -> None:
         """Clear the worksheet keeping only the header row."""
-        all_values = self.sheet.get_all_values()
+        all_values = retry_api_call(self.sheet.get_all_values)
         if not all_values:
             return
 
         headers = all_values[0]
-        self.sheet.clear()
-        self.sheet.append_row(headers)
+        retry_api_call(self.sheet.clear)
+        retry_api_call(self.sheet.append_row, headers)
 
     def get_hashes(self, worksheet: gspread.Worksheet | None = None) -> list[str]:
         target_sheet = worksheet if worksheet is not None else self.sheet
-        return target_sheet.col_values(1)[1:]
+        return retry_api_call(target_sheet.col_values, 1)[1:]
 
     @staticmethod
     def _is_manual_entry(raw_manual: str | bool | None) -> bool:
@@ -94,7 +131,7 @@ class GoogleSheetsClient:
 
     def get_manual_overrides(self) -> dict[str, str]:
         """Return a mapping of transaction hash to saved manual category."""
-        all_values: list[SheetRow] = self.sheet.get_all_values()
+        all_values: list[SheetRow] = retry_api_call(self.sheet.get_all_values)
         if not all_values or len(all_values) <= 1:
             return {}
 
@@ -126,7 +163,7 @@ class GoogleSheetsClient:
         worksheet: gspread.Worksheet | None = None,
     ) -> None:
         target_sheet = worksheet if worksheet is not None else self.sheet
-        target_sheet.append_rows(rows)
+        retry_api_call(target_sheet.append_rows, rows)
 
     def recategorize_existing(
         self,
@@ -134,7 +171,7 @@ class GoogleSheetsClient:
         dry_run: bool = False,
     ) -> int:
         """Recategorize non-manual rows preserving user edits and return the number of truly updated rows."""
-        all_values: list[SheetRow] = self.sheet.get_all_values()
+        all_values: list[SheetRow] = retry_api_call(self.sheet.get_all_values)
         if not all_values or len(all_values) <= 1:
             return 0
 
@@ -205,7 +242,7 @@ class GoogleSheetsClient:
             logger.info("[DRY RUN] Recategorization would update %s rows (not saved).", updated_count)
             return updated_count
 
-        self.sheet.update(range_label, updated_categories)
+        retry_api_call(self.sheet.update, range_label, updated_categories)
         
         return updated_count
     
