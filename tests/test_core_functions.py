@@ -23,7 +23,7 @@ from parsers import (
     detect_parser,
     parse_bank_file,
 )
-from parsers.utils import normalize_amount
+from parsers.utils import build_transaction_hash, normalize_amount
 
 
 # ==========================================
@@ -711,6 +711,42 @@ class TestBankParserDetection:
 
         non_existent_isy = tmp_path / "isybank_report.xlsx"
         assert detect_parser(non_existent_isy) is IsybankParser
+
+
+class TestTransactionHashingAndDuplicates:
+    """Tests for transaction hash generation and multiple same-day occurrences."""
+
+    def test_build_transaction_hash_stability_and_occurrence(self):
+        h0_a = build_transaction_hash("Isybank", "2026-01-15", -1.50, "Caffè")
+        h0_b = build_transaction_hash("Isybank", "2026-01-15", -1.50, "caffè", occurrence=0)
+        assert h0_a == h0_b
+
+        h1 = build_transaction_hash("Isybank", "2026-01-15", -1.50, "Caffè", occurrence=1)
+        assert h1 != h0_a
+
+    def test_collect_new_rows_preserves_legitimate_same_day_duplicates(self, tmp_path):
+        from cli import _collect_new_rows
+
+        csv_file = tmp_path / "account_statement.csv"
+        csv_file.write_text(
+            "date,amount,description\n"
+            "2026-01-15,-1.50,Coffee\n"
+            "2026-01-15,-1.50,Coffee\n",
+            encoding="utf-8",
+        )
+
+        def mock_builder(row, bank_label, filepath, row_index, seen_in_file):
+            key = (bank_label, str(row["date"]), float(row["amount"]), str(row["description"]).lower())
+            occ = seen_in_file.get(key, 0)
+            seen_in_file[key] = occ + 1
+            h = build_transaction_hash(bank_label, str(row["date"]), float(row["amount"]), str(row["description"]), occurrence=occ)
+            return h, [h, row["date"], float(row["amount"]), row["description"]]
+
+        existing = set()
+        new_rows = _collect_new_rows([csv_file], existing, mock_builder)
+        assert len(new_rows) == 2
+        assert new_rows[0][0] != new_rows[1][0]
+
 
 
 

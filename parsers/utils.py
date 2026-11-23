@@ -39,7 +39,10 @@ def build_transaction_hash(
     date_val: str,
     amount_val: float,
     desc_val: str,
+    occurrence: int = 0,
 ) -> str:
-    """Generate a stable hash to avoid duplicate loads."""
+    """Generate a stable hash to avoid duplicate loads while supporting multiple occurrences."""
     raw_hash_string = f"{bank_label}_{date_val}_{amount_val:.2f}_{desc_val.lower()}"
+    if occurrence > 0:
+        raw_hash_string = f"{raw_hash_string}#{occurrence}"
     return hashlib.sha256(raw_hash_string.encode("utf-8")).hexdigest()

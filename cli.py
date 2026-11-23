@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
-RowBuilder = Callable[[Any, str, Path, int], tuple[str, list[object]] | None]
+RowBuilder = Callable[[Any, str, Path, int, dict[tuple[str, str, float, str], int]], tuple[str, list[object]] | None]
 
 
 def _get_input_files(include_directa: bool) -> list[Path]:
@@ -47,8 +47,9 @@ def _collect_new_rows(
                 logger.info("Skipping non-%s file: %s", expected_bank_label, filepath.name)
                 continue
 
+            seen_in_file: dict[tuple[str, str, float, str], int] = {}
             for row_index, row in dataframe.iterrows():
-                built_row = row_builder(row, bank_label, filepath, row_index)
+                built_row = row_builder(row, bank_label, filepath, row_index, seen_in_file)
                 if built_row is None:
                     continue
 
@@ -112,6 +113,7 @@ def process_directa_files() -> None:
         bank_label: str,
         filepath: Path,
         row_index: int,
+        seen_in_file: dict[tuple[str, str, float, str], int],
     ) -> tuple[str, list[object]]:
         operation = [
             row.get(header.lower(), "")
@@ -121,11 +123,20 @@ def process_directa_files() -> None:
             header.lower(): value
             for header, value in zip(DIRECTA_HEADERS[1:], operation)
         }
+        date_val = str(operation_by_header["date"] or "")
+        amount_val = normalize_amount(operation_by_header["amount_eur"] or 0)
+        desc_val = str(operation_by_header["description"] or "")
+
+        key = ("directa", date_val, amount_val, desc_val.lower())
+        occurrence = seen_in_file.get(key, 0)
+        seen_in_file[key] = occurrence + 1
+
         row_hash = build_transaction_hash(
             "directa",
-            str(operation_by_header["date"] or ""),
-            normalize_amount(operation_by_header["amount_eur"] or 0),
-            str(operation_by_header["description"] or ""),
+            date_val,
+            amount_val,
+            desc_val,
+            occurrence=occurrence,
         )
         return row_hash, [row_hash, *operation]
 
@@ -171,6 +182,7 @@ def process_files(
         bank_label: str,
         filepath: Path,
         row_index: int,
+        seen_in_file: dict[tuple[str, str, float, str], int],
     ) -> tuple[str, list[object]] | None:
         if row[COL_DATE] is None or row[COL_AMOUNT] is None:
             logger.warning(
@@ -183,8 +195,13 @@ def process_files(
         date_obj = row[COL_DATE]
         amount_val = normalize_amount(row[COL_AMOUNT])
         desc_val = str(row[COL_DESCRIPTION]).strip()
+
+        key = (bank_label, str(date_obj), amount_val, desc_val.lower())
+        occurrence = seen_in_file.get(key, 0)
+        seen_in_file[key] = occurrence + 1
+
         hash_val = build_transaction_hash(
-            bank_label, str(date_obj), amount_val, desc_val
+            bank_label, str(date_obj), amount_val, desc_val, occurrence=occurrence
         )
 
         saved_manual_category = manual_overrides.get(hash_val)
