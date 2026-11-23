@@ -1038,6 +1038,60 @@ class TestCategorySheetValidation:
         assert categories == {"Groceries", "Utilities"}
 
 
+class TestStreamlitAppProcessing:
+    """Tests for the Streamlit web application processing logic."""
+
+    def test_process_uploaded_file_standard_csv(self):
+        from app import process_uploaded_file
+
+        csv_content = b"date,amount,description\n2026-01-15,-12.50,Supermarket\n"
+        categorizer = TransactionCategorizer({"rules": {"Groceries": ["SUPERMARKET"]}})
+
+        res = process_uploaded_file(
+            file_bytes=csv_content,
+            filename="trade_statement.csv",
+            categorizer=categorizer,
+            existing_standard_hashes=set(),
+            existing_directa_hashes=set(),
+        )
+
+        assert res["total_parsed"] == 1
+        assert res["new_count"] == 1
+        assert res["duplicates_count"] == 0
+        assert res["is_directa"] is False
+        assert res["preview_records"][0]["Category"] == "Groceries"
+
+    def test_process_uploaded_file_identifies_duplicates(self):
+        from app import process_uploaded_file
+
+        csv_content = b"date,amount,description\n2026-01-15,-12.50,Supermarket\n"
+        categorizer = TransactionCategorizer({})
+
+        # First pass to get the generated hash
+        res1 = process_uploaded_file(
+            file_bytes=csv_content,
+            filename="trade_statement.csv",
+            categorizer=categorizer,
+            existing_standard_hashes=set(),
+            existing_directa_hashes=set(),
+        )
+        existing_hash = res1["rows_to_upload"][0][0]
+
+        # Second pass with that hash in existing set
+        res2 = process_uploaded_file(
+            file_bytes=csv_content,
+            filename="trade_statement.csv",
+            categorizer=categorizer,
+            existing_standard_hashes={existing_hash},
+            existing_directa_hashes=set(),
+        )
+
+        assert res2["new_count"] == 0
+        assert res2["duplicates_count"] == 1
+        assert res2["preview_records"][0]["Status"] == "⚠️ Già caricata"
+
+
+
 
 
 

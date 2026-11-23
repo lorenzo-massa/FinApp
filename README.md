@@ -99,6 +99,23 @@ Share the target spreadsheet with the service account email and grant Editor acc
 
 ## 💻 Usage
 
+### Web Interface (Streamlit)
+
+You can launch the browser-based drag-and-drop web interface:
+
+```bash
+streamlit run app.py
+```
+
+Features included in the web app:
+- **Drag & drop** bank export files directly from your browser.
+- Instant parsing, category assignment, and duplicate detection preview table.
+- One-click sync to Google Sheets for both standard transactions and Directa.
+- Visual audit comparing `categories.json` against the Google Sheets `Categories` tab.
+- Quick expense overview metrics and category breakdown charts.
+
+### Command-Line Interface (CLI)
+
 Run the CLI with the project virtual environment active:
 
 ```bash
