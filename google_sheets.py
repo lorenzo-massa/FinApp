@@ -131,6 +131,7 @@ class GoogleSheetsClient:
     def recategorize_existing(
         self,
         categorizer: TransactionCategorizer,
+        dry_run: bool = False,
     ) -> int:
         """Recategorize non-manual rows preserving user edits and return the number of truly updated rows."""
         all_values: list[SheetRow] = self.sheet.get_all_values()
@@ -196,6 +197,10 @@ class GoogleSheetsClient:
 
         col_letter = _col_to_letter(col_category)
         range_label = f"{col_letter}{start_row}:{col_letter}{end_row}"
+
+        if dry_run:
+            logger.info("[DRY RUN] Recategorization would update %s rows (not saved).", updated_count)
+            return updated_count
 
         self.sheet.update(range_label, updated_categories)
         

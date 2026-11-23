@@ -1,4 +1,6 @@
+import argparse
 import logging
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -81,10 +83,11 @@ def _sync_input_files(
     row_builder: RowBuilder,
     source_name: str,
     expected_bank_label: str | None = None,
-) -> None:
+    dry_run: bool = False,
+) -> list[list[object]]:
     if not files:
         logger.warning("No %s files found in the 'input/' folder.", source_name)
-        return
+        return []
 
     new_rows = _collect_new_rows(
         files,
@@ -94,14 +97,24 @@ def _sync_input_files(
     )
     if not new_rows:
         logger.info("No %s rows to add.", source_name)
-        return
+        return []
+
+    if dry_run:
+        logger.info("[DRY RUN] %s new %s row(s) detected (preview):", len(new_rows), source_name)
+        for idx, row in enumerate(new_rows[:10], start=1):
+            preview_row = [str(cell) for cell in (row[1:6] if len(row) > 6 else row[:5])]
+            logger.info("  [%s] %s", idx, " | ".join(preview_row))
+        if len(new_rows) > 10:
+            logger.info("  ... and %s more row(s).", len(new_rows) - 10)
+        return new_rows
 
     logger.info("Appending %s %s rows to Google Sheets...", len(new_rows), source_name)
     client.append_rows(new_rows, worksheet)
     logger.info("%s rows uploaded successfully!", source_name)
+    return new_rows
 
 
-def process_directa_files() -> None:
+def process_directa_files(dry_run: bool = False) -> list[list[object]]:
     """Import only Directa investment operations to the dedicated worksheet."""
     logger.info("Connecting to Google Sheets for Directa import...")
     client = GoogleSheetsClient()
@@ -140,7 +153,7 @@ def process_directa_files() -> None:
         )
         return row_hash, [row_hash, *operation]
 
-    _sync_input_files(
+    return _sync_input_files(
         files,
         client,
         client.directa_sheet,
@@ -148,13 +161,15 @@ def process_directa_files() -> None:
         build_directa_row,
         "Directa",
         expected_bank_label="Directa",
+        dry_run=dry_run,
     )
 
 
 def process_files(
     force_reset: bool = False,
     preserve_manual_overrides: bool = False,
-) -> None:
+    dry_run: bool = False,
+) -> list[list[object]]:
     """Import files and upload new transactions to Google Sheets."""
     category_data = load_category_rules()
     categorizer = TransactionCategorizer(category_data)
@@ -167,8 +182,11 @@ def process_files(
         if preserve_manual_overrides:
             logger.info("Checking manual overrides before clearing the worksheet...")
             manual_overrides = client.get_manual_overrides()
-        logger.info("Clearing the worksheet...")
-        client.clear()
+        if dry_run:
+            logger.info("[DRY RUN] Would clear the worksheet (preserve_manual: %s)", preserve_manual_overrides)
+        else:
+            logger.info("Clearing the worksheet...")
+            client.clear()
         existing_hashes: set[str] = set()
     else:
         existing_hashes = set(client.get_hashes())
@@ -223,18 +241,81 @@ def process_files(
             is_manual,
         ]
 
-    _sync_input_files(
+    return _sync_input_files(
         files,
         client,
         client.sheet,
         existing_hashes,
         build_transaction_row,
         "standard transaction",
+        dry_run=dry_run,
     )
 
 
-def main() -> None:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="FinApp - Personal Finance Ingestor")
+    parser.add_argument(
+        "--sync",
+        action="store_true",
+        help="Sync new standard transactions from input/ to Google Sheets",
+    )
+    parser.add_argument(
+        "--directa",
+        action="store_true",
+        help="Sync Directa investment operations to Google Sheets",
+    )
+    parser.add_argument(
+        "--update-categories",
+        action="store_true",
+        help="Re-apply category rules from categories.json preserving manual edits",
+    )
+    parser.add_argument(
+        "--reset-preserve",
+        action="store_true",
+        help="Reset and reload standard transactions while preserving manual overrides",
+    )
+    parser.add_argument(
+        "--reset-full",
+        action="store_true",
+        help="Full reset and reload of standard transactions",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate execution without modifying Google Sheets",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
     """CLI interface."""
+    args = parse_args(argv)
+
+    # Headless execution if any specific flag is passed
+    if args.directa:
+        process_directa_files(dry_run=args.dry_run)
+        return
+    if args.update_categories:
+        category_data = load_category_rules()
+        categorizer = TransactionCategorizer(category_data)
+        logger.info("Connecting to Google Sheets...")
+        client = GoogleSheetsClient()
+        logger.info("Starting recategorization of existing transactions...")
+        updated_count = client.recategorize_existing(categorizer, dry_run=args.dry_run)
+        logger.info("Recategorization finished. %s transaction(s) were updated.", updated_count)
+        return
+    if args.reset_preserve:
+        process_files(force_reset=True, preserve_manual_overrides=True, dry_run=args.dry_run)
+        return
+    if args.reset_full:
+        process_files(force_reset=True, preserve_manual_overrides=False, dry_run=args.dry_run)
+        return
+    if args.sync or args.dry_run:
+        process_files(force_reset=False, dry_run=args.dry_run)
+        return
+
+    # Interactive menu when no CLI arguments are supplied
     print("\n--- 🏦 FinApp ---")
     print("1. Sync new transactions (default)")
     print("2. Sync Directa operations")
@@ -289,6 +370,7 @@ def main() -> None:
             logger.info("Operation cancelled.")
     else:
         process_files(force_reset=False)
+
 
 if __name__ == "__main__":
     main()

@@ -111,6 +111,24 @@ On Windows it is also common to use the project venv explicitly:
 .\.venv\Scripts\python.exe .\cli.py
 ```
 
+### Command-line flags (headless & automation)
+
+You can run FinApp directly without interactive prompts, or simulate execution:
+
+```bash
+# Sync standard transactions
+python cli.py --sync
+
+# Dry-run (preview transactions without writing to Google Sheets)
+python cli.py --sync --dry-run
+
+# Sync Directa operations
+python cli.py --directa
+
+# Update categories
+python cli.py --update-categories
+```
+
 ### Interactive menu
 
 1. **Sync new transactions**: imports standard bank files from `input/` into the `Transactions` sheet.

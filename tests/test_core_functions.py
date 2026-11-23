@@ -775,6 +775,52 @@ class TestTransactionHashingAndDuplicates:
         assert len(run2_rows) == 0
 
 
+class TestCliArgsAndDryRun:
+    """Tests for CLI arguments parsing and dry-run mode."""
+
+    def test_parse_args_flags(self):
+        from cli import parse_args
+
+        args = parse_args(["--sync", "--dry-run"])
+        assert args.sync is True
+        assert args.dry_run is True
+        assert args.directa is False
+
+        args_directa = parse_args(["--directa"])
+        assert args_directa.directa is True
+        assert args_directa.sync is False
+
+        args_update = parse_args(["--update-categories"])
+        assert args_update.update_categories is True
+
+    def test_sync_input_files_dry_run_does_not_call_append(self, tmp_path):
+        from cli import _sync_input_files
+
+        csv_file = tmp_path / "account_statement.csv"
+        csv_file.write_text("date,amount,description\n2026-01-15,-1.50,Coffee\n", encoding="utf-8")
+
+        mock_client = MagicMock()
+        mock_worksheet = MagicMock()
+
+        def mock_builder(row, bank_label, filepath, row_index, seen_in_file):
+            return "hash123", ["hash123", row["date"], float(row["amount"]), row["description"]]
+
+        rows = _sync_input_files(
+            [csv_file],
+            mock_client,
+            mock_worksheet,
+            set(),
+            mock_builder,
+            "test source",
+            dry_run=True,
+        )
+
+        assert len(rows) == 1
+        # append_rows should NOT be called in dry-run mode
+        mock_client.append_rows.assert_not_called()
+
+
+
 
 
 
