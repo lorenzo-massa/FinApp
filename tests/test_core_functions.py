@@ -14,6 +14,7 @@ from categorization import (
 from google_sheets import (
     GoogleSheetsClient,
     STANDARD_HEADERS,
+    _col_to_letter,
 )
 from parsers import DirectaParser, IsybankParser, TradeRepublicParser
 from parsers.utils import normalize_amount
@@ -659,4 +660,19 @@ class TestGoogleSheetsClient:
             client = GoogleSheetsClient()
 
         assert client.get_manual_overrides() == {"hash2": "Custom Expense"}
+
+    def test_col_to_letter_single_and_multi_letter(self):
+        """Verify column letter conversion handles single and multi-letter columns."""
+        assert _col_to_letter(0) == "A"
+        assert _col_to_letter(3) == "D"
+        assert _col_to_letter(25) == "Z"
+        assert _col_to_letter(26) == "AA"
+        assert _col_to_letter(27) == "AB"
+        assert _col_to_letter(51) == "AZ"
+        assert _col_to_letter(52) == "BA"
+        assert _col_to_letter(701) == "ZZ"
+        assert _col_to_letter(702) == "AAA"
+        with pytest.raises(ValueError):
+            _col_to_letter(-1)
+
 

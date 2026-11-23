@@ -51,8 +51,15 @@ MANDATORY_HEADERS = [HEADER_CATEGORY, HEADER_AMOUNT, HEADER_DESCRIPTION, HEADER_
 
 
 def _col_to_letter(col_idx: int) -> str:
-    """Convert a 0-based index to an Excel column letter (0 -> 'A', 3 -> 'D')."""
-    return chr(65 + col_idx)
+    """Convert a 0-based index to an Excel column letter (0 -> 'A', 26 -> 'AA')."""
+    if col_idx < 0:
+        raise ValueError(f"Column index must be non-negative, got {col_idx}")
+    result: list[str] = []
+    col_idx += 1
+    while col_idx > 0:
+        col_idx, remainder = divmod(col_idx - 1, 26)
+        result.append(chr(65 + remainder))
+    return "".join(reversed(result))
 
 
 class GoogleSheetsClient:
