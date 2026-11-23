@@ -264,7 +264,7 @@ def process_files(
             category_name = saved_manual_category
             is_manual = True
         else:
-            category_name = categorizer.categorize(desc_val, amount_val)
+            category_name = categorizer.categorize(desc_val, amount_val, bank_label)
             is_manual = False
 
         return hash_val, [

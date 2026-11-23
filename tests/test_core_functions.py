@@ -894,6 +894,56 @@ class TestSettingsEnvironmentConfig:
         assert settings.WORKSHEET_TRANSACTIONS == "Transactions"
 
 
+class TestAdvancedCategorizationRules:
+    """Tests for advanced categorization criteria (direction, bank, amount)."""
+
+    def test_direction_filter_income_vs_expense(self):
+        rules = {
+            "rules": {
+                "Cashback": [{"pattern": "BONUS", "type": "income"}],
+                "Penalty Fee": [{"pattern": "BONUS", "type": "expense"}],
+            },
+            "default_income": "Other Income",
+            "default_expense": "Other Expense",
+        }
+        categorizer = TransactionCategorizer(rules)
+
+        assert categorizer.categorize("ANNUAL BONUS", amount=150.0) == "Cashback"
+        assert categorizer.categorize("FEE ON BONUS", amount=-25.0) == "Penalty Fee"
+
+    def test_bank_filter(self):
+        rules = {
+            "rules": {
+                "TR Savings Plan": [{"pattern": "SAVINGS PLAN", "bank": "Trade Republic"}],
+                "Bank Investment": [{"pattern": "SAVINGS PLAN", "bank": "Isybank"}],
+            }
+        }
+        categorizer = TransactionCategorizer(rules)
+
+        assert categorizer.categorize("SAVINGS PLAN EXECUTION", -50.0, bank="Trade Republic") == "TR Savings Plan"
+        assert categorizer.categorize("SAVINGS PLAN EXECUTION", -50.0, bank="Isybank") == "Bank Investment"
+
+    def test_amount_range_filter(self):
+        rules = {
+            "rules": {
+                "Micro Expense": [{"pattern": "BAR", "max_amount": 5.0}],
+                "Major Dinner": [{"pattern": "BAR", "min_amount": 50.0}],
+            },
+            "default_expense": "Standard Expense",
+        }
+        categorizer = TransactionCategorizer(rules)
+
+        assert categorizer.categorize("COFFEE BAR", -3.50) == "Micro Expense"
+        assert categorizer.categorize("LOUNGE BAR", -85.0) == "Major Dinner"
+        assert categorizer.categorize("WINE BAR", -20.0) == "Standard Expense"
+
+    def test_invalid_rule_dict_raises_value_error(self):
+        bad_rules = {"rules": {"Test": [{"no_pattern": 123}]}}
+        with pytest.raises(ValueError, match="pattern must be a string"):
+            TransactionCategorizer(bad_rules)
+
+
+
 
 
 

@@ -150,6 +150,8 @@ class GoogleSheetsClient:
                 f"Required header missing in Google Sheet: {err}"
             ) from err
 
+        col_account = headers.index(HEADER_ACCOUNT) if HEADER_ACCOUNT in headers else -1
+
         data_rows = all_values[1:]
         updated_categories: list[list[str]] = []
         updated_count = 0
@@ -171,9 +173,10 @@ class GoogleSheetsClient:
                 row[col_description] if col_description < len(row) else ""
             )
             raw_amount = row[col_amount] if col_amount < len(row) else "0"
+            account_val = str(row[col_account]) if col_account >= 0 and col_account < len(row) else ""
 
             amount = self._parse_amount_safely(raw_amount)
-            new_category = categorizer.categorize(description, amount)
+            new_category = categorizer.categorize(description, amount, bank=account_val)
             processed_rows += 1
 
             if new_category != current_category:
