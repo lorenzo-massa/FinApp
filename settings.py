@@ -3,6 +3,7 @@ from pathlib import Path
 # File paths
 BASE_DIR = Path(__file__).resolve().parent
 INPUT_DIR = BASE_DIR / "input"
+ARCHIVE_DIR = INPUT_DIR / "archive"
 CREDENTIALS_FILE = BASE_DIR / "credentials.json"
 CATEGORIES_FILE = BASE_DIR / "categories.json"
 

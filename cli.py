@@ -12,7 +12,7 @@ from parsers.utils import (
     build_transaction_hash, normalize_amount,
     COL_DATE, COL_DESCRIPTION, COL_AMOUNT
 )
-from settings import INPUT_DIR, WORKSHEET_TRANSACTIONS
+from settings import ARCHIVE_DIR, INPUT_DIR, WORKSHEET_TRANSACTIONS
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -22,6 +22,8 @@ RowBuilder = Callable[[Any, str, Path, int, dict[tuple[str, str, float, str], in
 
 
 def _get_input_files(include_directa: bool) -> list[Path]:
+    if not INPUT_DIR.exists():
+        return []
     return sorted(
         item
         for item in INPUT_DIR.iterdir()
@@ -32,13 +34,35 @@ def _get_input_files(include_directa: bool) -> list[Path]:
     )
 
 
+def archive_processed_files(files: list[Path], archive_dir: Path | None = None) -> None:
+    """Move processed input files to the archive directory."""
+    if not files:
+        return
+    target_dir = archive_dir if archive_dir is not None else ARCHIVE_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for file in files:
+        if not file.exists():
+            continue
+        dest = target_dir / file.name
+        if dest.exists():
+            stem = file.stem
+            suffix = file.suffix
+            counter = 1
+            while (target_dir / f"{stem}_{counter}{suffix}").exists():
+                counter += 1
+            dest = target_dir / f"{stem}_{counter}{suffix}"
+        file.rename(dest)
+        logger.info("Archived processed file: %s -> %s", file.name, dest.name)
+
+
 def _collect_new_rows(
     files: list[Path],
     existing_hashes: set[str],
     row_builder: RowBuilder,
     expected_bank_label: str | None = None,
-) -> list[list[object]]:
+) -> tuple[list[list[object]], list[Path]]:
     new_rows: list[list[object]] = []
+    successful_files: list[Path] = []
 
     for filepath in files:
         logger.info("Processing file: %s", filepath.name)
@@ -69,10 +93,11 @@ def _collect_new_rows(
                 file_new_rows += 1
 
             logger.info("Added %s new rows from %s", file_new_rows, filepath.name)
+            successful_files.append(filepath)
         except Exception as exc:
             logger.error("Error processing %s: %s", filepath.name, exc)
 
-    return new_rows
+    return new_rows, successful_files
 
 
 def _sync_input_files(
@@ -84,20 +109,18 @@ def _sync_input_files(
     source_name: str,
     expected_bank_label: str | None = None,
     dry_run: bool = False,
+    archive: bool = False,
 ) -> list[list[object]]:
     if not files:
         logger.warning("No %s files found in the 'input/' folder.", source_name)
         return []
 
-    new_rows = _collect_new_rows(
+    new_rows, successful_files = _collect_new_rows(
         files,
         existing_hashes,
         row_builder,
         expected_bank_label,
     )
-    if not new_rows:
-        logger.info("No %s rows to add.", source_name)
-        return []
 
     if dry_run:
         logger.info("[DRY RUN] %s new %s row(s) detected (preview):", len(new_rows), source_name)
@@ -106,15 +129,27 @@ def _sync_input_files(
             logger.info("  [%s] %s", idx, " | ".join(preview_row))
         if len(new_rows) > 10:
             logger.info("  ... and %s more row(s).", len(new_rows) - 10)
+        if archive:
+            logger.info("[DRY RUN] Would archive %s processed file(s) to %s", len(successful_files), ARCHIVE_DIR)
         return new_rows
 
-    logger.info("Appending %s %s rows to Google Sheets...", len(new_rows), source_name)
-    client.append_rows(new_rows, worksheet)
-    logger.info("%s rows uploaded successfully!", source_name)
+    if not new_rows:
+        logger.info("No %s rows to add.", source_name)
+    else:
+        logger.info("Appending %s %s rows to Google Sheets...", len(new_rows), source_name)
+        client.append_rows(new_rows, worksheet)
+        logger.info("%s rows uploaded successfully!", source_name)
+
+    if archive and successful_files:
+        archive_processed_files(successful_files)
+
     return new_rows
 
 
-def process_directa_files(dry_run: bool = False) -> list[list[object]]:
+def process_directa_files(
+    dry_run: bool = False,
+    archive: bool = False,
+) -> list[list[object]]:
     """Import only Directa investment operations to the dedicated worksheet."""
     logger.info("Connecting to Google Sheets for Directa import...")
     client = GoogleSheetsClient()
@@ -162,6 +197,7 @@ def process_directa_files(dry_run: bool = False) -> list[list[object]]:
         "Directa",
         expected_bank_label="Directa",
         dry_run=dry_run,
+        archive=archive,
     )
 
 
@@ -169,6 +205,7 @@ def process_files(
     force_reset: bool = False,
     preserve_manual_overrides: bool = False,
     dry_run: bool = False,
+    archive: bool = False,
 ) -> list[list[object]]:
     """Import files and upload new transactions to Google Sheets."""
     category_data = load_category_rules()
@@ -249,6 +286,7 @@ def process_files(
         build_transaction_row,
         "standard transaction",
         dry_run=dry_run,
+        archive=archive,
     )
 
 
@@ -285,6 +323,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Simulate execution without modifying Google Sheets",
     )
+    parser.add_argument(
+        "--archive",
+        action="store_true",
+        help="Move processed files to input/archive/ upon successful completion",
+    )
     return parser.parse_args(argv)
 
 
@@ -294,7 +337,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # Headless execution if any specific flag is passed
     if args.directa:
-        process_directa_files(dry_run=args.dry_run)
+        process_directa_files(dry_run=args.dry_run, archive=args.archive)
         return
     if args.update_categories:
         category_data = load_category_rules()
@@ -306,13 +349,13 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Recategorization finished. %s transaction(s) were updated.", updated_count)
         return
     if args.reset_preserve:
-        process_files(force_reset=True, preserve_manual_overrides=True, dry_run=args.dry_run)
+        process_files(force_reset=True, preserve_manual_overrides=True, dry_run=args.dry_run, archive=args.archive)
         return
     if args.reset_full:
-        process_files(force_reset=True, preserve_manual_overrides=False, dry_run=args.dry_run)
+        process_files(force_reset=True, preserve_manual_overrides=False, dry_run=args.dry_run, archive=args.archive)
         return
-    if args.sync or args.dry_run:
-        process_files(force_reset=False, dry_run=args.dry_run)
+    if args.sync or args.dry_run or args.archive:
+        process_files(force_reset=False, dry_run=args.dry_run, archive=args.archive)
         return
 
     # Interactive menu when no CLI arguments are supplied

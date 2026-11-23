@@ -743,7 +743,7 @@ class TestTransactionHashingAndDuplicates:
             return h, [h, row["date"], float(row["amount"]), row["description"]]
 
         existing = set()
-        new_rows = _collect_new_rows([csv_file], existing, mock_builder)
+        new_rows, _ = _collect_new_rows([csv_file], existing, mock_builder)
         assert len(new_rows) == 2
         assert new_rows[0][0] != new_rows[1][0]
 
@@ -767,11 +767,11 @@ class TestTransactionHashingAndDuplicates:
             return h, [h, row["date"], float(row["amount"]), row["description"]]
 
         existing = set()
-        run1_rows = _collect_new_rows([csv_file], existing, mock_builder)
+        run1_rows, _ = _collect_new_rows([csv_file], existing, mock_builder)
         assert len(run1_rows) == 2
 
         # Second run with existing containing the hashes from run 1
-        run2_rows = _collect_new_rows([csv_file], existing, mock_builder)
+        run2_rows, _ = _collect_new_rows([csv_file], existing, mock_builder)
         assert len(run2_rows) == 0
 
 
@@ -818,6 +818,59 @@ class TestCliArgsAndDryRun:
         assert len(rows) == 1
         # append_rows should NOT be called in dry-run mode
         mock_client.append_rows.assert_not_called()
+
+    def test_archive_processed_files(self, tmp_path):
+        from cli import archive_processed_files
+
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        archive_dir = input_dir / "archive"
+
+        f1 = input_dir / "statement.csv"
+        f1.write_text("data", encoding="utf-8")
+
+        archive_processed_files([f1], archive_dir=archive_dir)
+
+        assert not f1.exists()
+        assert (archive_dir / "statement.csv").exists()
+
+        # Test collision handling
+        f2 = input_dir / "statement.csv"
+        f2.write_text("data2", encoding="utf-8")
+        archive_processed_files([f2], archive_dir=archive_dir)
+
+        assert not f2.exists()
+        assert (archive_dir / "statement_1.csv").exists()
+
+    def test_sync_input_files_archive_flag(self, tmp_path):
+        from cli import _sync_input_files
+
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        archive_dir = input_dir / "archive"
+        csv_file = input_dir / "statement.csv"
+        csv_file.write_text("date,amount,description\n2026-01-15,-1.50,Coffee\n", encoding="utf-8")
+
+        mock_client = MagicMock()
+        mock_worksheet = MagicMock()
+
+        def mock_builder(row, bank_label, filepath, row_index, seen_in_file):
+            return "h1", ["h1", row["date"], float(row["amount"]), row["description"]]
+
+        with patch("cli.ARCHIVE_DIR", archive_dir):
+            _sync_input_files(
+                [csv_file],
+                mock_client,
+                mock_worksheet,
+                set(),
+                mock_builder,
+                "test",
+                archive=True,
+            )
+
+        assert not csv_file.exists()
+        assert (archive_dir / "statement.csv").exists()
+
 
 
 
