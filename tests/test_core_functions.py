@@ -872,6 +872,29 @@ class TestCliArgsAndDryRun:
         assert (archive_dir / "statement.csv").exists()
 
 
+class TestSettingsEnvironmentConfig:
+    """Tests for settings environment variables configuration."""
+
+    def test_settings_reads_environment_variables(self, monkeypatch):
+        import importlib
+        import settings
+
+        monkeypatch.setenv("FINAPP_SPREADSHEET_NAME", "CustomSheet")
+        monkeypatch.setenv("FINAPP_WORKSHEET_TRANSACTIONS", "CustomTx")
+        importlib.reload(settings)
+
+        assert settings.SPREADSHEET_NAME == "CustomSheet"
+        assert settings.WORKSHEET_TRANSACTIONS == "CustomTx"
+
+        monkeypatch.delenv("FINAPP_SPREADSHEET_NAME", raising=False)
+        monkeypatch.delenv("FINAPP_WORKSHEET_TRANSACTIONS", raising=False)
+        importlib.reload(settings)
+
+        assert settings.SPREADSHEET_NAME == "FinApp"
+        assert settings.WORKSHEET_TRANSACTIONS == "Transactions"
+
+
+
 
 
 

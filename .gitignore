@@ -12,6 +12,7 @@ __pycache__/
 input/
 credentials.json
 categories.json
+.env
 *.csv
 *.xlsx
 *.ini
