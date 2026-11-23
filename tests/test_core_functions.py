@@ -16,7 +16,13 @@ from google_sheets import (
     STANDARD_HEADERS,
     _col_to_letter,
 )
-from parsers import DirectaParser, IsybankParser, TradeRepublicParser
+from parsers import (
+    DirectaParser,
+    IsybankParser,
+    TradeRepublicParser,
+    detect_parser,
+    parse_bank_file,
+)
 from parsers.utils import normalize_amount
 
 
@@ -674,5 +680,37 @@ class TestGoogleSheetsClient:
         assert _col_to_letter(702) == "AAA"
         with pytest.raises(ValueError):
             _col_to_letter(-1)
+
+
+class TestBankParserDetection:
+    """Tests for automatic bank parser detection."""
+
+    def test_detect_directa_by_content_without_name(self, tmp_path):
+        """A CSV file without 'directa' in the name should still be recognized by content."""
+        file = tmp_path / "custom_export_2026.csv"
+        content = "Data operazione;Tipo operazione;Descrizione;Importo euro\n01-01-2026;BUY;ETF;100\n"
+        file.write_text(content, encoding="utf-8-sig")
+
+        assert detect_parser(file) is DirectaParser
+
+    def test_detect_trade_republic_by_content_without_name(self, tmp_path):
+        """A CSV file with standard TR headers should be recognized even with an arbitrary name."""
+        file = tmp_path / "account_statement.csv"
+        content = "date,amount,description,counterparty\n2026-01-01,-10.00,Coffee,Cafe\n"
+        file.write_text(content, encoding="utf-8")
+
+        assert detect_parser(file) is TradeRepublicParser
+
+    def test_detect_fallback_by_filename(self, tmp_path):
+        """Fallback to filename heuristics if file does not exist on disk."""
+        non_existent_directa = tmp_path / "directa_2026.csv"
+        assert detect_parser(non_existent_directa) is DirectaParser
+
+        non_existent_tr = tmp_path / "trade_transactions.csv"
+        assert detect_parser(non_existent_tr) is TradeRepublicParser
+
+        non_existent_isy = tmp_path / "isybank_report.xlsx"
+        assert detect_parser(non_existent_isy) is IsybankParser
+
 
 
