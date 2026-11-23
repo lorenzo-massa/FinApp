@@ -8,14 +8,20 @@ __pycache__/
 # Virtual environment
 .venv/
 
-# Local files
-input/
+# Local files and bank statements
+input*/
 credentials.json
 categories.json
 .env
+.env*.local
 *.csv
+*.xls
 *.xlsx
 *.ini
+*.log
+desktop.ini
+Thumbs.db
+.DS_Store
 
 # Test artifacts
 .pytest_cache/
