@@ -993,6 +993,52 @@ class TestRetryLogicAndSummary:
         assert "Files archived:          2" in captured
 
 
+class TestCategorySheetValidation:
+    """Tests for validating category rules against the Google Sheets Categories worksheet."""
+
+    def test_validate_categories_against_sheet_detects_mismatches(self):
+        from categorization import validate_categories_against_sheet
+
+        json_config = {
+            "rules": {
+                "Groceries": ["SUPERMARKET"],
+                "UnknownCategory": ["PATTERN"],
+            },
+            "default_income": "Salary",
+            "default_expense": "Other",
+        }
+        sheet_categories = {"Groceries", "Salary", "Other", "Transport"}
+
+        diff = validate_categories_against_sheet(json_config, sheet_categories)
+
+        assert diff["unknown_in_json"] == {"UnknownCategory"}
+        assert diff["uncovered_in_sheet"] == {"Transport"}
+
+    def test_validate_categories_against_sheet_empty_sheet(self):
+        from categorization import validate_categories_against_sheet
+
+        diff = validate_categories_against_sheet({"rules": {"Groceries": []}}, set())
+        assert diff == {"unknown_in_json": set(), "uncovered_in_sheet": set()}
+
+    def test_get_valid_categories_drops_header(self):
+        from google_sheets import GoogleSheetsClient
+
+        mock_sheet = MagicMock()
+        mock_sheet.col_values.return_value = ["Category", "Groceries", "Utilities", ""]
+        mock_spreadsheet = MagicMock()
+        mock_spreadsheet.worksheet.return_value = mock_sheet
+
+        with patch.object(GoogleSheetsClient, "connect_to_sheets", return_value=mock_spreadsheet):
+            with patch.object(GoogleSheetsClient, "get_transaction_sheet"):
+                with patch.object(GoogleSheetsClient, "get_directa_sheet"):
+                    client = GoogleSheetsClient()
+                    client.spreadsheet = mock_spreadsheet
+
+        categories = client.get_valid_categories()
+        assert categories == {"Groceries", "Utilities"}
+
+
+
 
 
 

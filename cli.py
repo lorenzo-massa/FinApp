@@ -5,14 +5,25 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from categorization import TransactionCategorizer, load_category_rules
+from categorization import (
+    CategoryConfig,
+    TransactionCategorizer,
+    load_category_rules,
+    validate_categories_against_sheet,
+)
 from google_sheets import DIRECTA_HEADERS, GoogleSheetsClient
 from parsers import parse_bank_file
 from parsers.utils import (
     build_transaction_hash, normalize_amount,
     COL_DATE, COL_DESCRIPTION, COL_AMOUNT
 )
-from settings import ARCHIVE_DIR, INPUT_DIR, WORKSHEET_TRANSACTIONS
+from settings import (
+    ARCHIVE_DIR,
+    CATEGORIES_FILE,
+    INPUT_DIR,
+    WORKSHEET_CATEGORIES,
+    WORKSHEET_TRANSACTIONS,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -265,6 +276,53 @@ def process_directa_files(
     )
 
 
+def check_categories_alignment(
+    client: GoogleSheetsClient,
+    category_config: CategoryConfig,
+    verbose: bool = False,
+) -> dict[str, set[str]]:
+    """Validate categories in categories.json against the Categories worksheet."""
+    valid_sheet_categories = client.get_valid_categories()
+    if not valid_sheet_categories:
+        if verbose:
+            logger.info("Worksheet '%s' is empty or not available. Skipping validation.", WORKSHEET_CATEGORIES)
+        return {"unknown_in_json": set(), "uncovered_in_sheet": set()}
+
+    diff = validate_categories_against_sheet(category_config, valid_sheet_categories)
+    unknown = sorted(diff["unknown_in_json"])
+    uncovered = sorted(diff["uncovered_in_sheet"])
+
+    if unknown:
+        logger.warning(
+            "⚠️ Category mismatch: %s categories in %s are not in Google Sheet '%s': %s",
+            len(unknown),
+            CATEGORIES_FILE.name,
+            WORKSHEET_CATEGORIES,
+            ", ".join(unknown),
+        )
+
+    if verbose:
+        print("\n" + "=" * 55)
+        print("📋 CATEGORIES VALIDATION AUDIT")
+        print("=" * 55)
+        print(f"• Total sheet categories: {len(valid_sheet_categories)}")
+        print(f"• Total JSON categories:  {len(category_config.get('rules', {}))}")
+        if unknown:
+            print(f"\n❌ In '{CATEGORIES_FILE.name}' but NOT in Google Sheet '{WORKSHEET_CATEGORIES}':")
+            for c in unknown:
+                print(f"   - {c}")
+        else:
+            print(f"\n✅ All categories in '{CATEGORIES_FILE.name}' exist in Google Sheet!")
+
+        if uncovered:
+            print(f"\nℹ️ In Google Sheet '{WORKSHEET_CATEGORIES}' but NO rules defined in JSON:")
+            for c in uncovered:
+                print(f"   - {c}")
+        print("=" * 55 + "\n")
+
+    return diff
+
+
 def process_files(
     force_reset: bool = False,
     preserve_manual_overrides: bool = False,
@@ -277,6 +335,7 @@ def process_files(
 
     logger.info("Connecting to Google Sheets...")
     client = GoogleSheetsClient()
+    check_categories_alignment(client, category_data, verbose=False)
     manual_overrides: dict[str, str] = {}
 
     if force_reset:
@@ -392,6 +451,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Move processed files to input/archive/ upon successful completion",
     )
+    parser.add_argument(
+        "--validate-categories",
+        action="store_true",
+        help="Audit categories in categories.json against the Google Sheets Categories tab",
+    )
     return parser.parse_args(argv)
 
 
@@ -400,6 +464,12 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
 
     # Headless execution if any specific flag is passed
+    if args.validate_categories:
+        category_data = load_category_rules()
+        logger.info("Connecting to Google Sheets...")
+        client = GoogleSheetsClient()
+        check_categories_alignment(client, category_data, verbose=True)
+        return
     if args.directa:
         process_directa_files(dry_run=args.dry_run, archive=args.archive)
         return
@@ -432,8 +502,9 @@ def main(argv: list[str] | None = None) -> None:
         "5. Full reset and reload (Clear"
         f" '{WORKSHEET_TRANSACTIONS}' and reload input files)"
     )
+    print("6. Validate categories against Google Sheet")
 
-    choice = input("\nChoose an option (1/2/3/4/5) [Default: 1]: ").strip()
+    choice = input("\nChoose an option (1/2/3/4/5/6) [Default: 1]: ").strip()
 
     if choice == "2":
         process_directa_files()
@@ -475,6 +546,11 @@ def main(argv: list[str] | None = None) -> None:
             process_files(force_reset=True)
         else:
             logger.info("Operation cancelled.")
+    elif choice == "6":
+        category_data = load_category_rules()
+        logger.info("Connecting to Google Sheets...")
+        client = GoogleSheetsClient()
+        check_categories_alignment(client, category_data, verbose=True)
     else:
         process_files(force_reset=False)
 

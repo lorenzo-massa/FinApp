@@ -42,6 +42,38 @@ def load_category_rules(filepath: Path = CATEGORIES_FILE) -> CategoryConfig:
         return default_config
 
 
+def validate_categories_against_sheet(
+    category_config: CategoryConfig,
+    sheet_categories: set[str],
+) -> dict[str, set[str]]:
+    """Compare categories in JSON config against valid categories defined in Google Sheets."""
+    if not sheet_categories:
+        return {"unknown_in_json": set(), "uncovered_in_sheet": set()}
+
+    json_categories = set(category_config.get("rules", {}).keys())
+    default_income = category_config.get("default_income")
+    default_expense = category_config.get("default_expense")
+    if default_income:
+        json_categories.add(default_income)
+    if default_expense:
+        json_categories.add(default_expense)
+
+    sheet_map = {c.strip().lower(): c.strip() for c in sheet_categories if c.strip()}
+    json_map = {c.strip().lower(): c.strip() for c in json_categories if c.strip()}
+
+    unknown_in_json = {
+        c for c_lower, c in json_map.items() if c_lower not in sheet_map
+    }
+    uncovered_in_sheet = {
+        c for c_lower, c in sheet_map.items() if c_lower not in json_map
+    }
+
+    return {
+        "unknown_in_json": unknown_in_json,
+        "uncovered_in_sheet": uncovered_in_sheet,
+    }
+
+
 class CompiledRule:
     """Represents a compiled rule with optional criteria."""
 

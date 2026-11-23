@@ -6,7 +6,13 @@ from typing import Any, TypeVar
 import gspread
 
 from categorization import TransactionCategorizer
-from settings import CREDENTIALS_FILE, SPREADSHEET_NAME, WORKSHEET_DIRECTA, WORKSHEET_TRANSACTIONS
+from settings import (
+    CREDENTIALS_FILE,
+    SPREADSHEET_NAME,
+    WORKSHEET_CATEGORIES,
+    WORKSHEET_DIRECTA,
+    WORKSHEET_TRANSACTIONS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +285,20 @@ class GoogleSheetsClient:
     def get_directa_sheet(self, spreadsheet: gspread.Spreadsheet) -> gspread.Worksheet:
         """Return the existing Investments operations worksheet."""
         return spreadsheet.worksheet(WORKSHEET_DIRECTA)
+
+    def get_valid_categories(self) -> set[str]:
+        """Fetch the list of valid categories defined in the Categories worksheet."""
+        try:
+            worksheet = self.spreadsheet.worksheet(WORKSHEET_CATEGORIES)
+            vals = retry_api_call(worksheet.col_values, 1)
+            if not vals:
+                return set()
+            if vals[0].strip().lower() in {"category", "categories", "categoria", "categorie", "nome"}:
+                vals = vals[1:]
+            return {str(v).strip() for v in vals if str(v).strip()}
+        except Exception as exc:
+            logger.info("Worksheet '%s' not found or could not be loaded: %s", WORKSHEET_CATEGORIES, exc)
+            return set()
 
 
 
